@@ -1,0 +1,29 @@
+# PHP
+*.log
+*.tmp
+*.cache
+
+# Database config (ไม่ควรอัพขึ้น GitHub)
+config/database.php
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+
+# Sensitive files
+*.env
+.env.local
+.env.production
+
+# Kiro files (optional - ถ้าไม่ต้องการแชร์)
+.kiro/
