@@ -3,8 +3,8 @@
 *.tmp
 *.cache
 
-# Database config (ไม่ควรอัพขึ้น GitHub)
-config/database.php
+# Database config (ไม่ควรอัพขึ้น GitHub - ถ้าต้องการความปลอดภัย)
+# config/database.php
 
 # IDE files
 .vscode/
