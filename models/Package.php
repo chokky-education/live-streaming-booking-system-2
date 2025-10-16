@@ -115,40 +115,48 @@ class Package extends BaseModel {
     /**
      * อัปเดตแพ็คเกจ
      */
-    public function update() {
-        $query = "UPDATE " . $this->table_name . " 
-                  SET name=:name, description=:description, price=:price, 
-                      equipment_list=:equipment_list, image_url=:image_url, is_active=:is_active,
-                      max_concurrent_reservations=:max_concurrent_reservations 
-                  WHERE id=:id";
+    public function update($id = null, $data = null) {
+        $targetId = $id ?? $this->id;
 
-        $stmt = $this->conn->prepare($query);
+        if ($targetId === null) {
+            throw new Exception('Package ID is required for update');
+        }
 
-        // Convert equipment list to JSON
-        $equipment_json = json_encode($this->equipment_list, JSON_UNESCAPED_UNICODE);
+        if ($data === null) {
+            $data = [
+                'name' => $this->name,
+                'description' => $this->description,
+                'price' => $this->price,
+                'equipment_list' => $this->equipment_list,
+                'image_url' => $this->image_url,
+                'is_active' => $this->is_active,
+                'max_concurrent_reservations' => (int)$this->max_concurrent_reservations,
+            ];
+        }
 
-        $stmt->bindParam(":name", $this->name);
-        $stmt->bindParam(":description", $this->description);
-        $stmt->bindParam(":price", $this->price);
-        $stmt->bindParam(":equipment_list", $equipment_json);
-        $stmt->bindParam(":image_url", $this->image_url);
-        $stmt->bindParam(":is_active", $this->is_active);
-        $stmt->bindParam(":max_concurrent_reservations", $this->max_concurrent_reservations, PDO::PARAM_INT);
-        $stmt->bindParam(":id", $this->id);
+        if (isset($data['equipment_list']) && is_array($data['equipment_list'])) {
+            $data['equipment_list'] = json_encode($data['equipment_list'], JSON_UNESCAPED_UNICODE);
+        }
 
-        return $stmt->execute();
+        return parent::update($targetId, $data);
     }
 
     /**
      * ลบแพ็คเกจ (เปลี่ยนสถานะเป็นไม่ใช้งาน)
      */
-    public function delete() {
+    public function delete($id = null) {
+        $targetId = $id ?? $this->id;
+
+        if ($targetId === null) {
+            throw new Exception('Package ID is required for delete');
+        }
+
         $query = "UPDATE " . $this->table_name . " 
                   SET is_active = FALSE 
                   WHERE id = :id";
 
         $stmt = $this->conn->prepare($query);
-        $stmt->bindParam(":id", $this->id);
+        $stmt->bindValue(":id", $targetId, PDO::PARAM_INT);
 
         return $stmt->execute();
     }
