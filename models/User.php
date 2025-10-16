@@ -136,20 +136,23 @@ class User extends BaseModel {
     /**
      * อัปเดตข้อมูลผู้ใช้
      */
-    public function update() {
-        $query = "UPDATE " . $this->table_name . " 
-                  SET email=:email, phone=:phone, first_name=:first_name, last_name=:last_name 
-                  WHERE id=:id";
+    public function update($id = null, $data = null) {
+        if ($data === null) {
+            $data = [
+                'email' => $this->email,
+                'phone' => $this->phone,
+                'first_name' => $this->first_name,
+                'last_name' => $this->last_name,
+            ];
+        }
 
-        $stmt = $this->conn->prepare($query);
+        $targetId = $id ?? $this->id;
 
-        $stmt->bindParam(":email", $this->email);
-        $stmt->bindParam(":phone", $this->phone);
-        $stmt->bindParam(":first_name", $this->first_name);
-        $stmt->bindParam(":last_name", $this->last_name);
-        $stmt->bindParam(":id", $this->id);
+        if ($targetId === null) {
+            throw new Exception('User ID is required for update');
+        }
 
-        return $stmt->execute();
+        return parent::update($targetId, $data);
     }
 
     /**
