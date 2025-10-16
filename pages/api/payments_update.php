@@ -36,8 +36,7 @@ try {
         api_error('VALIDATION_ERROR', 'id and valid status required (verified|rejected)', 400);
     }
 
-    $database = new Database();
-    $db = $database->getConnection();
+    $db = get_db_connection();
     $payment = new Payment($db);
     $row = $payment->getById($payment_id);
     if (!$row) {

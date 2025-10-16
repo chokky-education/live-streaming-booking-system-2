@@ -17,8 +17,7 @@ $success_message = '';
 $selected_package_id = isset($_GET['package']) ? (int)$_GET['package'] : 0;
 
 try {
-    $database = new Database();
-    $db = $database->getConnection();
+    $db = get_db_connection();
     $package = new Package($db);
     $booking = new Booking($db);
 

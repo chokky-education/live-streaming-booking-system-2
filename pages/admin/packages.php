@@ -31,8 +31,7 @@ if (!function_exists('remove_package_item_image')) {
 }
 
 try {
-    $database = new Database();
-    $db = $database->getConnection();
+    $db = get_db_connection();
 
     $package = new Package($db);
     $packageItem = new PackageItem($db);

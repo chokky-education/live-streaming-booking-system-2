@@ -31,8 +31,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
             $error_message = 'กรุณากรอก Username และรหัสผ่าน';
         } else {
             try {
-                $database = new Database();
-                $db = $database->getConnection();
+                $db = get_db_connection();
                 $user = new User($db);
 
                 if ($user->login($recent_username, $password)) {

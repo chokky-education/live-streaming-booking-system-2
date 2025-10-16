@@ -33,8 +33,7 @@ try {
     $transaction_ref = isset($payload['transaction_ref']) ? sanitize_input($payload['transaction_ref']) : null;
     $notes = isset($payload['notes']) ? sanitize_input($payload['notes']) : null;
 
-    $database = new Database();
-    $db = $database->getConnection();
+    $db = get_db_connection();
     $booking = new Booking($db);
 
     // Resolve booking

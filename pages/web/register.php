@@ -36,8 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register'])) {
         $form_data['phone'] = sanitize_input($_POST['phone'] ?? '');
 
         try {
-            $database = new Database();
-            $db = $database->getConnection();
+            $db = get_db_connection();
             $user = new User($db);
 
             $data = $form_data;

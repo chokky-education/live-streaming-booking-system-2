@@ -14,8 +14,7 @@ require_admin();
 $error_message = '';
 
 try {
-    $database = new Database();
-    $db = $database->getConnection();
+    $db = get_db_connection();
 
     $payment = new Payment($db);
     $status_filter = isset($_GET['status']) ? sanitize_input($_GET['status']) : null;

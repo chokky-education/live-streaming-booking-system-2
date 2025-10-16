@@ -9,8 +9,7 @@ require_once __DIR__ . '/../../models/Package.php';
 init_request_id();
 
 try {
-    $database = new Database();
-    $db = $database->getConnection();
+    $db = get_db_connection();
     $package = new Package($db);
     $rows = $package->getActivePackages(true);
 

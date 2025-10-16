@@ -13,8 +13,7 @@ try {
         api_error('UNAUTHORIZED', 'Authentication required', 401);
     }
 
-    $database = new Database();
-    $db = $database->getConnection();
+    $db = get_db_connection();
     $booking = new Booking($db);
     $list = $booking->getUserBookings($_SESSION['user_id'], 50, 0);
     api_success(['bookings' => $list]);

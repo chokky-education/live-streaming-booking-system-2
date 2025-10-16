@@ -21,8 +21,7 @@ if ($booking_id <= 0) {
 }
 
 try {
-    $database = new Database();
-    $db = $database->getConnection();
+    $db = get_db_connection();
 
     $booking = new Booking($db);
     $payment = new Payment($db);

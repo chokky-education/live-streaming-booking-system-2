@@ -41,8 +41,7 @@ try {
         'notes'        => isset($payload['notes']) ? sanitize_input($payload['notes']) : null,
     ];
 
-    $database = new Database();
-    $db = $database->getConnection();
+    $db = get_db_connection();
     $package = new Package($db);
     $booking = new Booking($db);
 

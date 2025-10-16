@@ -19,8 +19,7 @@ $user_bookings = [];
 $modifiable_bookings = [];
 
 try {
-    $database = new Database();
-    $db = $database->getConnection();
+    $db = get_db_connection();
     $user = new User($db);
     $booking = new Booking($db);
 

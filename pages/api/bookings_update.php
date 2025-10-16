@@ -29,8 +29,7 @@ try {
         api_error('CSRF_INVALID', 'Invalid CSRF token', 401);
     }
 
-    $database = new Database();
-    $db = $database->getConnection();
+    $db = get_db_connection();
     $bookingModel = new Booking($db);
 
     $bookingId = isset($payload['booking_id']) ? (int)$payload['booking_id'] : null;

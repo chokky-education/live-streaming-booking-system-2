@@ -18,8 +18,7 @@ $customers = [];
 $total_customers = 0;
 
 try {
-    $database = new Database();
-    $db = $database->getConnection();
+    $db = get_db_connection();
 
     $user = new User($db);
     $booking = new Booking($db);
