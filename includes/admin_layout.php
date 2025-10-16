@@ -53,7 +53,7 @@ function render_admin_sidebar(string $active): void
     } else {
         echo '<span>ไม่ได้เข้าสู่ระบบ</span>';
     }
-    echo '<a class="btn btn-ghost" style="justify-content:center;" href="/pages/logout.php">ออกจากระบบ</a>';
+    echo '<a class="btn btn-ghost" style="justify-content:center;" href="/pages/web/logout.php">ออกจากระบบ</a>';
     echo '</div>';
     echo '</aside>';
 }

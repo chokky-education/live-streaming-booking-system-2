@@ -4,10 +4,11 @@
  * ระบบจองอุปกรณ์ Live Streaming
  */
 
-require_once '../includes/config.php';
-require_once '../includes/functions.php';
-require_once '../models/Booking.php';
-require_once '../models/Payment.php';
+$rootPath = dirname(__DIR__, 2);
+require_once $rootPath . '/includes/config.php';
+require_once $rootPath . '/includes/functions.php';
+require_once $rootPath . '/models/Booking.php';
+require_once $rootPath . '/models/Payment.php';
 
 require_login();
 
@@ -16,7 +17,7 @@ $success_message = '';
 $booking_code = isset($_GET['booking']) ? sanitize_input($_GET['booking']) : '';
 
 if ($booking_code === '') {
-    redirect('profile.php');
+    redirect('/pages/web/profile.php');
 }
 
 try {
@@ -102,7 +103,7 @@ if ($booking_data) {
     $remaining_amount = $booking_data['total_price'] - $deposit_amount;
 }
 
-require_once '../includes/layout.php';
+require_once $rootPath . '/includes/layout.php';
 
 render_page_start('ชำระเงิน - ' . SITE_NAME, [
     'active' => 'profile',
@@ -254,8 +255,8 @@ render_page_start('ชำระเงิน - ' . SITE_NAME, [
             </div>
 
             <div style="margin-top:32px; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;">
-                <a class="btn btn-ghost" href="profile.php"><i class="fa-solid fa-arrow-left"></i>&nbsp;กลับโปรไฟล์</a>
-                <a class="btn btn-ghost" href="booking.php"><i class="fa-solid fa-plus"></i>&nbsp;จองใหม่</a>
+                <a class="btn btn-ghost" href="/pages/web/profile.php"><i class="fa-solid fa-arrow-left"></i>&nbsp;กลับโปรไฟล์</a>
+                <a class="btn btn-ghost" href="/pages/web/booking.php"><i class="fa-solid fa-plus"></i>&nbsp;จองใหม่</a>
             </div>
         <?php endif; ?>
     </div>

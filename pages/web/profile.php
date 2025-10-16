@@ -4,10 +4,11 @@
  * ระบบจองอุปกรณ์ Live Streaming
  */
 
-require_once '../includes/config.php';
-require_once '../includes/functions.php';
-require_once '../models/User.php';
-require_once '../models/Booking.php';
+$rootPath = dirname(__DIR__, 2);
+require_once $rootPath . '/includes/config.php';
+require_once $rootPath . '/includes/functions.php';
+require_once $rootPath . '/models/User.php';
+require_once $rootPath . '/models/Booking.php';
 
 require_login();
 
@@ -118,7 +119,7 @@ function getStatusBadge($status) {
     return '<span class="' . $config['class'] . '">' . $config['label'] . '</span>';
 }
 
-require_once '../includes/layout.php';
+require_once $rootPath . '/includes/layout.php';
 
 render_page_start('โปรไฟล์ - ' . SITE_NAME, [
     'active' => 'profile',
@@ -234,20 +235,20 @@ render_page_start('โปรไฟล์ - ' . SITE_NAME, [
             </div>
         </div>
 
-        <div class="table-shell" style="margin-top:48px;">
+        <div id="booking-history" class="table-shell" style="margin-top:48px;">
             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px;">
                 <div>
                     <h3 style="margin:0;">ประวัติการจองล่าสุด</h3>
                     <p style="margin:4px 0 0; color:var(--brand-muted);">อัปเดตล่าสุด 10 รายการ</p>
                 </div>
-                <a class="btn btn-ghost" href="booking.php"><i class="fa-solid fa-plus"></i>&nbsp;จองอีกครั้ง</a>
+                <a class="btn btn-ghost" href="/pages/web/booking.php"><i class="fa-solid fa-plus"></i>&nbsp;จองอีกครั้ง</a>
             </div>
 
             <?php if (empty($user_bookings)) : ?>
                 <div class="empty-state">
                     <i class="fa-solid fa-calendar-xmark" style="font-size:2rem;"></i>
                     <p style="margin-top:12px;">ยังไม่มีการจอง เริ่มต้นจองอุปกรณ์ของคุณเลย</p>
-                    <a class="btn btn-primary" href="booking.php">จองตอนนี้</a>
+                    <a class="btn btn-primary" href="/pages/web/booking.php">จองตอนนี้</a>
                 </div>
             <?php else : ?>
                 <table>
@@ -289,7 +290,7 @@ render_page_start('โปรไฟล์ - ' . SITE_NAME, [
                                 <td>
                                     <div class="booking-actions__stack">
                                         <?php if ($item['status'] === 'pending') : ?>
-                                            <a class="btn btn-primary" title="ชำระเงิน" href="payment.php?booking=<?= urlencode($item['booking_code']); ?>">
+                                            <a class="btn btn-primary" title="ชำระเงิน" href="/pages/web/payment.php?booking=<?= urlencode($item['booking_code']); ?>">
                                                 <i class="fa-solid fa-credit-card"></i>
                                             </a>
                                         <?php endif; ?>
@@ -305,7 +306,7 @@ render_page_start('โปรไฟล์ - ' . SITE_NAME, [
                                             <span class="badge badge--muted" title="<?= htmlspecialchars($canModify['reason'], ENT_QUOTES, 'UTF-8'); ?>">จำกัด</span>
                                         <?php endif; ?>
 
-                                        <a class="btn btn-ghost" title="ดูทั้งหมด" href="booking_history.php">
+                                        <a class="btn btn-ghost" title="ดูทั้งหมด" href="#booking-history">
                                             <i class="fa-solid fa-arrow-up-right-from-square"></i>
                                         </a>
                                     </div>
@@ -315,7 +316,7 @@ render_page_start('โปรไฟล์ - ' . SITE_NAME, [
                     </tbody>
                 </table>
                 <div style="margin-top:16px; text-align:center;">
-                    <a class="btn btn-ghost" href="booking_history.php"><i class="fa-solid fa-history"></i>&nbsp;ดูประวัติทั้งหมด</a>
+                    <a class="btn btn-ghost" href="#booking-history"><i class="fa-solid fa-history"></i>&nbsp;ดูประวัติทั้งหมด</a>
                 </div>
             <?php endif; ?>
         </div>

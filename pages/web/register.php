@@ -4,9 +4,10 @@
  * ระบบจองอุปกรณ์ Live Streaming
  */
 
-require_once '../includes/config.php';
-require_once '../includes/functions.php';
-require_once '../models/User.php';
+$rootPath = dirname(__DIR__, 2);
+require_once $rootPath . '/includes/config.php';
+require_once $rootPath . '/includes/functions.php';
+require_once $rootPath . '/models/User.php';
 
 $error_message = '';
 $success_message = '';
@@ -19,7 +20,7 @@ $form_data = [
 ];
 
 if (is_logged_in()) {
-    redirect('profile.php');
+    redirect('/pages/web/profile.php');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register'])) {
@@ -79,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register'])) {
     }
 }
 
-require_once '../includes/layout.php';
+require_once $rootPath . '/includes/layout.php';
 
 render_page_start('สมัครสมาชิก - ' . SITE_NAME, [
     'active' => 'profile',
@@ -145,7 +146,7 @@ render_page_start('สมัครสมาชิก - ' . SITE_NAME, [
 
                 <div style="grid-column: 1 / -1; display:flex; flex-direction:column; gap:18px;">
                     <button type="submit" name="register" class="btn btn-primary" style="width:100%;">สมัครใช้งาน</button>
-                    <p style="text-align:center; margin:0; color:var(--brand-muted);">มีบัญชีแล้ว? <a href="login.php">เข้าสู่ระบบ</a></p>
+                    <p style="text-align:center; margin:0; color:var(--brand-muted);">มีบัญชีแล้ว? <a href="/pages/web/login.php">เข้าสู่ระบบ</a></p>
                 </div>
             </form>
         </div>

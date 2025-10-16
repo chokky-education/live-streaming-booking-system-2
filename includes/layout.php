@@ -58,11 +58,11 @@ function render_primary_nav(array $options = []): void
     } else {
         $links = [
             ['key' => 'home', 'label' => 'หน้าแรก', 'href' => '/index.php'],
-            ['key' => 'packages', 'label' => 'แพ็คเกจ', 'href' => '/pages/booking.php'],
+            ['key' => 'packages', 'label' => 'แพ็คเกจ', 'href' => '/pages/web/booking.php'],
         ];
 
         if (is_logged_in()) {
-            $links[] = ['key' => 'profile', 'label' => 'บัญชีของฉัน', 'href' => '/pages/profile.php'];
+            $links[] = ['key' => 'profile', 'label' => 'บัญชีของฉัน', 'href' => '/pages/web/profile.php'];
         } else {
             $links[] = ['key' => 'learn', 'label' => 'วิธีใช้งาน', 'href' => '/index.php#how-it-works'];
         }
@@ -94,10 +94,10 @@ function render_primary_nav(array $options = []): void
     if (is_logged_in()) {
         $username = htmlspecialchars($_SESSION['username'] ?? 'บัญชี', ENT_QUOTES, 'UTF-8');
         echo '<span class="nav-username">' . $username . '</span>';
-        echo '<a class="btn btn-ghost" href="' . ($is_admin_area ? '/pages/logout.php' : '/pages/logout.php') . '">ออกจากระบบ</a>';
+        echo '<a class="btn btn-ghost" href="/pages/web/logout.php">ออกจากระบบ</a>';
     } else {
-        echo '<a class="btn btn-ghost" href="/pages/login.php">เข้าสู่ระบบ</a>';
-        echo '<a class="btn btn-primary" href="/pages/register.php">เริ่มต้นใช้งาน</a>';
+        echo '<a class="btn btn-ghost" href="/pages/web/login.php">เข้าสู่ระบบ</a>';
+        echo '<a class="btn btn-primary" href="/pages/web/register.php">เริ่มต้นใช้งาน</a>';
     }
     echo '</div>';
 
@@ -125,9 +125,9 @@ function render_footer(array $options = []): void
     echo '<div>';
     echo '<h4>โซลูชัน</h4>';
     echo '<div class="footer__links">';
-    echo '<a href="/pages/booking.php">ระบบจอง</a>';
-    echo '<a href="/pages/payment.php">ระบบชำระเงิน</a>';
-    echo '<a href="/pages/profile.php">แดชบอร์ดลูกค้า</a>';
+    echo '<a href="/pages/web/booking.php">ระบบจอง</a>';
+    echo '<a href="/pages/web/payment.php">ระบบชำระเงิน</a>';
+    echo '<a href="/pages/web/profile.php">แดชบอร์ดลูกค้า</a>';
     echo '</div>';
     echo '</div>';
 

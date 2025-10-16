@@ -4,9 +4,10 @@
  * ระบบจองอุปกรณ์ Live Streaming
  */
 
-require_once '../includes/config.php';
-require_once '../includes/functions.php';
-require_once '../models/User.php';
+$rootPath = dirname(__DIR__, 2);
+require_once $rootPath . '/includes/config.php';
+require_once $rootPath . '/includes/functions.php';
+require_once $rootPath . '/models/User.php';
 
 $error_message = '';
 $success_message = '';
@@ -14,9 +15,9 @@ $recent_username = '';
 
 if (is_logged_in()) {
     if (is_admin()) {
-        redirect('admin/dashboard.php');
+        redirect('/pages/admin/dashboard.php');
     }
-    redirect('profile.php');
+    redirect('/pages/web/profile.php');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
@@ -48,9 +49,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
                     log_event("User {$user->username} logged in", 'INFO');
 
                     if ($user->role === 'admin') {
-                        redirect('admin/dashboard.php');
+                        redirect('/pages/admin/dashboard.php');
                     }
-                    redirect('profile.php');
+                    redirect('/pages/web/profile.php');
                 }
 
                 $error_message = 'Username หรือรหัสผ่านไม่ถูกต้อง';
@@ -62,7 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
     }
 }
 
-require_once '../includes/layout.php';
+require_once $rootPath . '/includes/layout.php';
 
 render_page_start('เข้าสู่ระบบ - ' . SITE_NAME, [
     'active' => 'profile',
@@ -114,7 +115,7 @@ render_page_start('เข้าสู่ระบบ - ' . SITE_NAME, [
 
             <div style="text-align:center; margin-top:24px;">
                 <p style="margin-bottom:12px; color:var(--brand-muted);">ยังไม่มีบัญชี?</p>
-                <a class="btn btn-ghost" style="width:100%; justify-content:center;" href="register.php">สมัครใช้งาน</a>
+                <a class="btn btn-ghost" style="width:100%; justify-content:center;" href="/pages/web/register.php">สมัครใช้งาน</a>
             </div>
         </div>
     </div>

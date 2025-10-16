@@ -4,8 +4,9 @@
  * ระบบจองอุปกรณ์ Live Streaming
  */
 
-require_once '../includes/config.php';
-require_once '../includes/functions.php';
+$rootPath = dirname(__DIR__, 2);
+require_once $rootPath . '/includes/config.php';
+require_once $rootPath . '/includes/functions.php';
 
 // Log การออกจากระบบ
 if (is_logged_in()) {
@@ -16,5 +17,5 @@ if (is_logged_in()) {
 session_destroy();
 
 // Redirect ไปหน้าแรก
-redirect('../index.html');
+redirect('/index.php');
 ?>

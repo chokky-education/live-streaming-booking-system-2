@@ -4,10 +4,11 @@
  * ระบบจองอุปกรณ์ Live Streaming
  */
 
-require_once '../includes/config.php';
-require_once '../includes/functions.php';
-require_once '../models/Package.php';
-require_once '../models/Booking.php';
+$rootPath = dirname(__DIR__, 2);
+require_once $rootPath . '/includes/config.php';
+require_once $rootPath . '/includes/functions.php';
+require_once $rootPath . '/models/Package.php';
+require_once $rootPath . '/models/Booking.php';
 
 require_login();
 
@@ -118,7 +119,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_booking'])) {
 $recent_request = $_POST ?? [];
 $quote_preview = $pricing_breakdown ?? null;
 
-require_once '../includes/layout.php';
+require_once $rootPath . '/includes/layout.php';
 
 $map_extra_css = [];
 if (GOOGLE_MAPS_API_KEY === '') {
@@ -315,7 +316,7 @@ render_page_start('จองอุปกรณ์ - ' . SITE_NAME, [
 
         <div style="margin-top:32px; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;">
             <a class="btn btn-ghost" href="/index.php"><i class="fa-solid fa-arrow-left"></i>&nbsp;กลับหน้าแรก</a>
-            <a class="btn btn-ghost" href="profile.php"><i class="fa-solid fa-user"></i>&nbsp;โปรไฟล์</a>
+            <a class="btn btn-ghost" href="/pages/web/profile.php"><i class="fa-solid fa-user"></i>&nbsp;โปรไฟล์</a>
         </div>
     </div>
 </section>
