@@ -1,0 +1,23 @@
+# Enable URL rewriting
+RewriteEngine On
+
+# Set the base directory
+RewriteBase /
+
+# If the request is for a valid file, directory, or symlink, serve it directly
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d [OR]
+RewriteCond %{REQUEST_FILENAME} -l
+RewriteRule ^ - [L]
+
+# Route all other requests through the pages router
+RewriteRule ^(.*)$ pages/index.php [QSA,L]
+
+# Set default character set
+AddDefaultCharset UTF-8
+
+# Disable directory listing
+Options -Indexes
+
+# Handle errors
+ErrorDocument 404 /pages/index.php

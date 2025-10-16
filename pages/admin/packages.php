@@ -6,36 +6,51 @@
 
 require_once '../../includes/config.php';
 require_once '../../includes/functions.php';
+require_once '../../includes/admin_layout.php';
 require_once '../../models/Package.php';
+require_once '../../models/PackageItem.php';
 
-// ตรวจสอบสิทธิ์ admin
 require_admin();
 
 $error_message = '';
 $success_message = '';
 
+if (!function_exists('remove_package_item_image')) {
+    function remove_package_item_image($relativePath): void
+    {
+        if (empty($relativePath)) {
+            return;
+        }
+        $projectRoot = dirname(__DIR__, 2);
+        $uploadsRoot = realpath($projectRoot . '/uploads/package-items');
+        $target = realpath($projectRoot . '/' . ltrim($relativePath, '/'));
+        if ($uploadsRoot && $target && str_starts_with($target, $uploadsRoot) && file_exists($target)) {
+            @unlink($target);
+        }
+    }
+}
+
 try {
     $database = new Database();
     $db = $database->getConnection();
-    
+
     $package = new Package($db);
-    
-    // ประมวลผลการเพิ่ม/แก้ไขแพ็คเกจ
-    if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_package'])) {
-        if (!verify_csrf_token($_POST['csrf_token'])) {
+    $packageItem = new PackageItem($db);
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_package'])) {
+        if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
             $error_message = 'Invalid CSRF token';
         } else {
+            $equipment_lines = array_filter(array_map('trim', explode("\n", $_POST['equipment_list'] ?? '')));
             $package_data = [
-                'name' => sanitize_input($_POST['name']),
-                'description' => sanitize_input($_POST['description']),
-                'price' => (float)$_POST['price'],
-                'equipment_list' => array_filter(array_map('trim', explode("\n", $_POST['equipment_list']))),
-                'is_active' => isset($_POST['is_active']) ? 1 : 0
+                'name' => sanitize_input($_POST['name'] ?? ''),
+                'description' => sanitize_input($_POST['description'] ?? ''),
+                'price' => (float)($_POST['price'] ?? 0),
+                'equipment_list' => $equipment_lines,
+                'is_active' => isset($_POST['is_active']) ? 1 : 0,
             ];
-            
-            // ตรวจสอบความถูกต้องของข้อมูล
+
             $validation_errors = $package->validate($package_data);
-            
             if (!empty($validation_errors)) {
                 $error_message = implode('<br>', $validation_errors);
             } else {
@@ -44,18 +59,17 @@ try {
                 $package->price = $package_data['price'];
                 $package->equipment_list = $package_data['equipment_list'];
                 $package->is_active = $package_data['is_active'];
-                
-                if (isset($_POST['package_id']) && $_POST['package_id']) {
-                    // แก้ไขแพ็คเกจ
-                    $package->id = (int)$_POST['package_id'];
+
+                $package_id = isset($_POST['package_id']) ? (int)$_POST['package_id'] : 0;
+                if ($package_id > 0) {
+                    $package->id = $package_id;
                     if ($package->update()) {
                         $success_message = 'อัปเดตแพ็คเกจสำเร็จ';
-                        log_event("Admin updated package {$package->id}", 'INFO');
+                        log_event("Admin updated package {$package_id}", 'INFO');
                     } else {
                         $error_message = 'เกิดข้อผิดพลาดในการอัปเดตแพ็คเกจ';
                     }
                 } else {
-                    // เพิ่มแพ็คเกจใหม่
                     if ($package->create()) {
                         $success_message = 'เพิ่มแพ็คเกจใหม่สำเร็จ';
                         log_event("Admin created new package {$package->id}", 'INFO');
@@ -66,15 +80,13 @@ try {
             }
         }
     }
-    
-    // ประมวลผลการลบแพ็คเกจ
-    if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['delete_package'])) {
-        if (!verify_csrf_token($_POST['csrf_token'])) {
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_package'])) {
+        if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
             $error_message = 'Invalid CSRF token';
         } else {
-            $package_id = (int)$_POST['package_id'];
+            $package_id = (int)($_POST['package_id'] ?? 0);
             $package->id = $package_id;
-            
             if ($package->delete()) {
                 $success_message = 'ปิดใช้งานแพ็คเกจสำเร็จ';
                 log_event("Admin deactivated package {$package_id}", 'INFO');
@@ -83,390 +95,343 @@ try {
             }
         }
     }
-    
-    // ดึงข้อมูลแพ็คเกจทั้งหมด
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_item'])) {
+        if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
+            $error_message = 'Invalid CSRF token';
+        } else {
+            $package_id = (int)($_POST['package_id'] ?? 0);
+            $item_data = [
+                'package_id' => $package_id,
+                'name' => sanitize_input($_POST['item_name'] ?? ''),
+                'quantity' => sanitize_input($_POST['item_quantity'] ?? ''),
+                'specs' => sanitize_input($_POST['item_specs'] ?? ''),
+                'notes' => sanitize_input($_POST['item_notes'] ?? ''),
+                'image_path' => null,
+                'image_alt' => sanitize_input($_POST['item_image_alt'] ?? ''),
+            ];
+
+            $validation = $packageItem->validate(['package_id' => $package_id, 'name' => $item_data['name']]);
+            if (!empty($validation)) {
+                $error_message = implode('<br>', $validation);
+            } else {
+                $uploadResult = $packageItem->handleImageUpload($_FILES['item_image'] ?? null);
+                if (!$uploadResult['success']) {
+                    $error_message = $uploadResult['message'];
+                } else {
+                    if (!empty($uploadResult['path'])) {
+                        $item_data['image_path'] = $uploadResult['path'];
+                    }
+                    $newId = $packageItem->create($item_data);
+                    if ($newId) {
+                        $success_message = 'เพิ่มอุปกรณ์ในแพ็คเกจสำเร็จ';
+                        log_event("Admin added package item {$newId} to package {$package_id}", 'INFO');
+                    } else {
+                        $error_message = 'ไม่สามารถเพิ่มอุปกรณ์ได้';
+                    }
+                }
+            }
+        }
+    }
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_item'])) {
+        if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
+            $error_message = 'Invalid CSRF token';
+        } else {
+            $item_id = (int)($_POST['item_id'] ?? 0);
+            $package_id = (int)($_POST['package_id'] ?? 0);
+            $existing = $packageItem->getById($item_id);
+
+            if (!$existing || (int)$existing['package_id'] !== $package_id) {
+                $error_message = 'ไม่พบรายการอุปกรณ์ที่ต้องการแก้ไข';
+            } else {
+                $item_data = [
+                    'name' => sanitize_input($_POST['item_name'] ?? ''),
+                    'quantity' => sanitize_input($_POST['item_quantity'] ?? ''),
+                    'specs' => sanitize_input($_POST['item_specs'] ?? ''),
+                    'notes' => sanitize_input($_POST['item_notes'] ?? ''),
+                    'image_path' => $existing['image_path'],
+                    'image_alt' => sanitize_input($_POST['item_image_alt'] ?? ''),
+                ];
+
+                $validation = $packageItem->validate(['package_id' => $package_id, 'name' => $item_data['name']]);
+                if (!empty($validation)) {
+                    $error_message = implode('<br>', $validation);
+                } else {
+                    $uploadResult = $packageItem->handleImageUpload($_FILES['item_image'] ?? null);
+                    if (!$uploadResult['success']) {
+                        $error_message = $uploadResult['message'];
+                    } else {
+                        if (!empty($uploadResult['path'])) {
+                            remove_package_item_image($existing['image_path']);
+                            $item_data['image_path'] = $uploadResult['path'];
+                        }
+
+                        if ($packageItem->update($item_id, $item_data)) {
+                            $success_message = 'อัปเดตรายการอุปกรณ์สำเร็จ';
+                            log_event("Admin updated package item {$item_id}", 'INFO');
+                        } else {
+                            $error_message = 'ไม่สามารถอัปเดตรายการอุปกรณ์ได้';
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_item'])) {
+        if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
+            $error_message = 'Invalid CSRF token';
+        } else {
+            $item_id = (int)($_POST['item_id'] ?? 0);
+            $existing = $packageItem->getById($item_id);
+            if (!$existing) {
+                $error_message = 'ไม่พบรายการอุปกรณ์';
+            } else {
+                if ($packageItem->delete($item_id)) {
+                    remove_package_item_image($existing['image_path']);
+                    $success_message = 'ลบอุปกรณ์ออกจากแพ็คเกจสำเร็จ';
+                    log_event("Admin deleted package item {$item_id}", 'INFO');
+                } else {
+                    $error_message = 'ไม่สามารถลบอุปกรณ์ได้';
+                }
+            }
+        }
+    }
+
     $packages = $package->getAllPackages();
-    
-    // ดึงสถิติแพ็คเกจ
     $package_stats = $package->getBookingStats();
-    
+
+    $editing_package = null;
+    if (isset($_GET['edit'])) {
+        $edit_id = (int)$_GET['edit'];
+        if ($edit_id > 0 && $package->getById($edit_id)) {
+            $editing_package = [
+                'id' => $package->id,
+                'name' => $package->name,
+                'description' => $package->description,
+                'price' => $package->price,
+                'equipment_list' => implode("\n", $package->equipment_list ?? []),
+                'is_active' => (int)$package->is_active,
+            ];
+        }
+    }
 } catch (Exception $e) {
     $error_message = 'เกิดข้อผิดพลาดในการโหลดข้อมูล';
-    log_event("Admin packages error: " . $e->getMessage(), 'ERROR');
+    log_event('Admin packages error: ' . $e->getMessage(), 'ERROR');
 }
+
+render_admin_page_start('จัดการแพ็คเกจ - ' . SITE_NAME, [
+    'active' => 'packages',
+]);
 ?>
 
-<!DOCTYPE html>
-<html lang="th">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>จัดการแพ็คเกจ - Admin Dashboard</title>
-    
-    <!-- Bootstrap 5 CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Font Awesome -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    
-    <style>
-        body {
-            font-family: 'Kanit', sans-serif;
-            background: #f8f9fa;
-        }
-        
-        .sidebar {
-            background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            color: white;
-        }
-        
-        .sidebar .nav-link {
-            color: rgba(255,255,255,0.8);
-            padding: 1rem 1.5rem;
-            border-radius: 10px;
-            margin: 0.2rem 0;
-            transition: all 0.3s ease;
-        }
-        
-        .sidebar .nav-link:hover,
-        .sidebar .nav-link.active {
-            color: white;
-            background: rgba(255,255,255,0.2);
-        }
-        
-        .main-content {
-            padding: 2rem;
-        }
-        
-        .card {
-            border: none;
-            border-radius: 15px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-        }
-        
-        .card-header {
-            background: white;
-            border-bottom: 1px solid #e9ecef;
-            border-radius: 15px 15px 0 0 !important;
-            padding: 1.5rem;
-        }
-        
-        .package-card {
-            border: 2px solid #e9ecef;
-            border-radius: 15px;
-            transition: all 0.3s ease;
-            height: 100%;
-        }
-        
-        .package-card.active {
-            border-color: #28a745;
-            background: #f8fff9;
-        }
-        
-        .package-card.inactive {
-            border-color: #dc3545;
-            background: #fff8f8;
-            opacity: 0.7;
-        }
-        
-        .package-header {
-            background: linear-gradient(45deg, #667eea, #764ba2);
-            color: white;
-            padding: 1.5rem;
-            border-radius: 13px 13px 0 0;
-            text-align: center;
-        }
-        
-        .package-price {
-            font-size: 2rem;
-            font-weight: 700;
-        }
-        
-        .equipment-list {
-            list-style: none;
-            padding: 0;
-        }
-        
-        .equipment-list li {
-            padding: 0.3rem 0;
-            border-bottom: 1px solid #eee;
-        }
-        
-        .equipment-list li:last-child {
-            border-bottom: none;
-        }
-        
-        .equipment-list i {
-            color: #28a745;
-            margin-right: 8px;
-        }
-        
-        @media (max-width: 768px) {
-            .sidebar {
-                min-height: auto;
-            }
-            
-            .main-content {
-                padding: 1rem;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="container-fluid">
-        <div class="row">
-            <!-- Sidebar -->
-            <div class="col-md-3 col-lg-2 sidebar p-0">
-                <div class="p-3">
-                    <h4 class="text-center mb-4">
-                        <i class="fas fa-video me-2"></i>
-                        Admin Panel
-                    </h4>
-                    
-                    <nav class="nav flex-column">
-                        <a class="nav-link" href="dashboard.php">
-                            <i class="fas fa-tachometer-alt me-2"></i>
-                            Dashboard
-                        </a>
-                        <a class="nav-link" href="bookings.php">
-                            <i class="fas fa-calendar-alt me-2"></i>
-                            จัดการการจอง
-                        </a>
-                        <a class="nav-link" href="payments.php">
-                            <i class="fas fa-credit-card me-2"></i>
-                            จัดการการชำระเงิน
-                        </a>
-                        <a class="nav-link active" href="packages.php">
-                            <i class="fas fa-box me-2"></i>
-                            จัดการแพ็คเกจ
-                        </a>
-                        <a class="nav-link" href="customers.php">
-                            <i class="fas fa-users me-2"></i>
-                            จัดการลูกค้า
-                        </a>
-                        <a class="nav-link" href="reports.php">
-                            <i class="fas fa-chart-bar me-2"></i>
-                            รายงาน
-                        </a>
-                        <hr class="my-3">
-                        <a class="nav-link" href="../profile.php">
-                            <i class="fas fa-user me-2"></i>
-                            โปรไฟล์
-                        </a>
-                        <a class="nav-link" href="../logout.php">
-                            <i class="fas fa-sign-out-alt me-2"></i>
-                            ออกจากระบบ
-                        </a>
-                    </nav>
-                </div>
+<section class="admin-toolbar">
+    <div>
+        <h1 style="margin:0;">จัดการแพ็คเกจ</h1>
+        <p style="margin:6px 0 0; color:var(--brand-muted);">เพิ่ม ปรับปรุง และจัดการรายการอุปกรณ์สำหรับงาน Live Streaming</p>
+    </div>
+    <?php if ($editing_package) : ?>
+        <a class="btn btn-ghost" href="/pages/admin/packages.php">ยกเลิกการแก้ไข</a>
+    <?php endif; ?>
+</section>
+
+<?php if ($error_message !== '') : ?>
+    <div class="alert alert-danger" role="alert"><?= $error_message; ?></div>
+<?php endif; ?>
+<?php if ($success_message !== '') : ?>
+    <div class="alert alert-success" role="alert"><?= $success_message; ?></div>
+<?php endif; ?>
+
+<div class="booking-panel">
+    <h3 style="margin-top:0;"><?= $editing_package ? 'แก้ไขแพ็คเกจ' : 'เพิ่มแพ็คเกจใหม่'; ?></h3>
+    <form method="POST" class="form-grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));" novalidate>
+        <input type="hidden" name="csrf_token" value="<?= generate_csrf_token(); ?>">
+        <input type="hidden" name="save_package" value="1">
+        <?php if ($editing_package) : ?>
+            <input type="hidden" name="package_id" value="<?= (int)$editing_package['id']; ?>">
+        <?php endif; ?>
+
+        <div>
+            <label for="package_name">ชื่อแพ็คเกจ *</label>
+            <input type="text" class="input" id="package_name" name="name" value="<?= htmlspecialchars($editing_package['name'] ?? '', ENT_QUOTES, 'UTF-8'); ?>" required>
+        </div>
+        <div>
+            <label for="package_price">ราคา (บาท) *</label>
+            <input type="number" class="input" id="package_price" name="price" min="0" step="0.01" value="<?= htmlspecialchars((string)($editing_package['price'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>" required>
+        </div>
+        <div style="grid-column:1 / -1;">
+            <label for="package_description">คำอธิบาย</label>
+            <textarea class="input" id="package_description" name="description" rows="3" placeholder="รายละเอียดแพ็คเกจ"><?= htmlspecialchars($editing_package['description'] ?? '', ENT_QUOTES, 'UTF-8'); ?></textarea>
+        </div>
+        <div style="grid-column:1 / -1;">
+            <label for="equipment_list">รายการอุปกรณ์ (ขึ้นบรรทัดใหม่ทุกรายการ) *</label>
+            <textarea class="input" id="equipment_list" name="equipment_list" rows="4" required><?= htmlspecialchars($editing_package['equipment_list'] ?? '', ENT_QUOTES, 'UTF-8'); ?></textarea>
+        </div>
+        <div style="align-self:center;">
+            <label style="display:flex; align-items:center; gap:8px;">
+                <input type="checkbox" name="is_active" <?= !isset($editing_package) || ($editing_package['is_active'] ?? 0) ? 'checked' : ''; ?>>
+                เปิดใช้งานแพ็คเกจทันที
+            </label>
+        </div>
+        <div style="grid-column:1 / -1;">
+            <button type="submit" class="btn btn-primary" style="width:100%;">
+                <?= $editing_package ? 'บันทึกการแก้ไข' : 'เพิ่มแพ็คเกจ'; ?>
+            </button>
+        </div>
+    </form>
+</div>
+
+<?php if (!empty($package_stats)) : ?>
+    <div class="dashboard__grid" style="margin-top:24px;">
+        <?php foreach ($package_stats as $stat) : ?>
+            <div class="metric-card">
+                <h3><?= htmlspecialchars($stat['name'], ENT_QUOTES, 'UTF-8'); ?></h3>
+                <strong><?= number_format($stat['total_bookings'] ?? 0); ?> การจอง</strong>
+                <p style="margin:4px 0 0; color:var(--brand-muted);">รายได้รวม <?= format_currency($stat['total_revenue'] ?? 0); ?></p>
             </div>
+        <?php endforeach; ?>
+    </div>
+<?php endif; ?>
 
-            <!-- Main Content -->
-            <div class="col-md-9 col-lg-10 main-content">
-                <!-- Header -->
-                <div class="d-flex justify-content-between align-items-center mb-4">
-                    <div>
-                        <h2>จัดการแพ็คเกจ</h2>
-                        <p class="text-muted mb-0">จัดการแพ็คเกจอุปกรณ์ Live Streaming</p>
-                    </div>
-                    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#packageModal">
-                        <i class="fas fa-plus me-2"></i>เพิ่มแพ็คเกจใหม่
-                    </button>
+<div class="dashboard" style="margin-top:32px;">
+    <?php foreach ($packages as $pkg) : ?>
+        <div class="booking-panel">
+            <div class="admin-toolbar">
+                <div>
+                    <h3 style="margin:0;"><?= htmlspecialchars($pkg['name'], ENT_QUOTES, 'UTF-8'); ?></h3>
+                    <p style="margin:4px 0 0; color:var(--brand-muted);">ราคา <?= format_currency($pkg['price']); ?> ต่อวัน</p>
                 </div>
-
-                <?php if ($error_message): ?>
-                    <div class="alert alert-danger">
-                        <i class="fas fa-exclamation-circle me-2"></i>
-                        <?php echo $error_message; ?>
-                    </div>
-                <?php endif; ?>
-                
-                <?php if ($success_message): ?>
-                    <div class="alert alert-success">
-                        <i class="fas fa-check-circle me-2"></i>
-                        <?php echo $success_message; ?>
-                    </div>
-                <?php endif; ?>
-
-                <!-- Package Statistics -->
-                <div class="row g-4 mb-4">
-                    <?php if (!empty($package_stats)): ?>
-                        <?php foreach ($package_stats as $stat): ?>
-                            <div class="col-lg-3 col-md-6">
-                                <div class="card">
-                                    <div class="card-body text-center">
-                                        <h5><?php echo htmlspecialchars($stat['name']); ?></h5>
-                                        <div class="h4 text-primary"><?php echo $stat['total_bookings'] ?? 0; ?> การจอง</div>
-                                        <div class="text-success"><?php echo format_currency($stat['total_revenue'] ?? 0); ?></div>
-                                    </div>
-                                </div>
-                            </div>
-                        <?php endforeach; ?>
-                    <?php else: ?>
-                        <div class="col-12">
-                            <div class="card">
-                                <div class="card-body text-center text-muted">
-                                    <i class="fas fa-chart-bar fa-3x mb-3"></i>
-                                    <h5>ยังไม่มีข้อมูลสถิติ</h5>
-                                    <p>สถิติจะแสดงเมื่อมีการจองแพ็คเกจ</p>
-                                </div>
-                            </div>
-                        </div>
+                <div style="display:flex; gap:12px;">
+                    <a class="btn btn-ghost" href="/pages/admin/packages.php?edit=<?= (int)$pkg['id']; ?>"><i class="fa-solid fa-pen"></i>&nbsp;แก้ไข</a>
+                    <?php if ((int)$pkg['is_active'] === 1) : ?>
+                        <form method="POST" onsubmit="return confirm('ยืนยันการปิดใช้งานแพ็คเกจนี้หรือไม่?');">
+                            <input type="hidden" name="csrf_token" value="<?= generate_csrf_token(); ?>">
+                            <input type="hidden" name="package_id" value="<?= (int)$pkg['id']; ?>">
+                            <input type="hidden" name="delete_package" value="1">
+                            <button type="submit" class="btn btn-ghost" style="color:#b61c2c; border-color:rgba(220,53,69,0.4);">ปิดใช้งาน</button>
+                        </form>
                     <?php endif; ?>
                 </div>
+            </div>
 
-                <!-- Packages Grid -->
-                <div class="row g-4">
-                    <?php foreach ($packages as $pkg): ?>
-                        <div class="col-lg-4 col-md-6">
-                            <div class="package-card <?php echo $pkg['is_active'] ? 'active' : 'inactive'; ?>">
-                                <div class="package-header">
-                                    <h5 class="mb-1"><?php echo htmlspecialchars($pkg['name']); ?></h5>
-                                    <div class="package-price"><?php echo format_currency($pkg['price']); ?></div>
-                                    <small>ต่อวัน</small>
-                                </div>
-                                <div class="p-3">
-                                    <p class="text-muted mb-3"><?php echo htmlspecialchars($pkg['description']); ?></p>
-                                    
-                                    <h6>รายการอุปกรณ์:</h6>
-                                    <ul class="equipment-list">
-                                        <?php foreach ($pkg['equipment_list'] as $equipment): ?>
-                                            <li><i class="fas fa-check"></i> <?php echo htmlspecialchars($equipment); ?></li>
-                                        <?php endforeach; ?>
-                                    </ul>
-                                    
-                                    <div class="mt-3">
-                                        <span class="badge <?php echo $pkg['is_active'] ? 'bg-success' : 'bg-danger'; ?>">
-                                            <?php echo $pkg['is_active'] ? 'เปิดใช้งาน' : 'ปิดใช้งาน'; ?>
-                                        </span>
+            <div class="info-card" style="margin-top:16px;">
+                <strong>รายละเอียด</strong>
+                <span><?= htmlspecialchars($pkg['description'] ?? '-', ENT_QUOTES, 'UTF-8'); ?></span>
+                <span>สถานะ: <?= (int)$pkg['is_active'] === 1 ? '<span class="badge badge--confirmed">เปิดใช้งาน</span>' : '<span class="badge badge--cancelled">ปิดใช้งาน</span>'; ?></span>
+                <?php if (!empty($pkg['equipment_list'])) : ?>
+                    <span style="margin-top:8px;">รายการอุปกรณ์พื้นฐาน:</span>
+                    <ul style="margin:0; padding-left:18px; color:var(--brand-muted);">
+                        <?php foreach ($pkg['equipment_list'] as $item) : ?>
+                            <li><?= htmlspecialchars($item, ENT_QUOTES, 'UTF-8'); ?></li>
+                        <?php endforeach; ?>
+                    </ul>
+                <?php endif; ?>
+            </div>
+
+            <h4 style="margin-top:24px;">รายการอุปกรณ์เสริม</h4>
+            <?php if (empty($pkg['items'])) : ?>
+                <div class="empty-state">
+                    <i class="fa-solid fa-cube"></i>
+                    <p style="margin-top:12px;">ยังไม่มีอุปกรณ์เสริม</p>
+                </div>
+            <?php else : ?>
+                <div class="stat-stack" style="margin-top:16px;">
+                    <?php foreach ($pkg['items'] as $item) : ?>
+                        <details class="info-card" style="margin-top:0;">
+                            <summary style="font-weight:600; cursor:pointer; display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                                <span><?= htmlspecialchars($item['name'], ENT_QUOTES, 'UTF-8'); ?><?= $item['quantity'] ? ' • ' . htmlspecialchars($item['quantity'], ENT_QUOTES, 'UTF-8') : ''; ?></span>
+                                <span style="color:var(--brand-muted); font-size:0.85rem;">คลิกเพื่อแก้ไข</span>
+                            </summary>
+                            <div style="margin-top:16px;">
+                                <?php if (!empty($item['image_path'])) : ?>
+                                    <img src="/<?= ltrim($item['image_path'], '/'); ?>" alt="<?= htmlspecialchars($item['image_alt'] ?? '', ENT_QUOTES, 'UTF-8'); ?>" style="max-width:100%; border-radius: var(--brand-radius-sm); box-shadow: var(--brand-shadow-sm); margin-bottom:12px;">
+                                <?php endif; ?>
+                                <form method="POST" enctype="multipart/form-data" class="form-grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
+                                    <input type="hidden" name="csrf_token" value="<?= generate_csrf_token(); ?>">
+                                    <input type="hidden" name="update_item" value="1">
+                                    <input type="hidden" name="item_id" value="<?= (int)$item['id']; ?>">
+                                    <input type="hidden" name="package_id" value="<?= (int)$pkg['id']; ?>">
+
+                                    <div>
+                                        <label>ชื่ออุปกรณ์ *</label>
+                                        <input type="text" class="input" name="item_name" value="<?= htmlspecialchars($item['name'], ENT_QUOTES, 'UTF-8'); ?>" required>
                                     </div>
-                                    
-                                    <div class="mt-3 d-flex gap-2">
-                                        <button type="button" class="btn btn-sm btn-outline-primary flex-fill" 
-                                                onclick="editPackage(<?php echo htmlspecialchars(json_encode($pkg)); ?>)">
-                                            <i class="fas fa-edit me-1"></i>แก้ไข
-                                        </button>
-                                        
-                                        <?php if ($pkg['is_active']): ?>
-                                            <button type="button" class="btn btn-sm btn-outline-danger" 
-                                                    onclick="deactivatePackage(<?php echo $pkg['id']; ?>)">
-                                                <i class="fas fa-times me-1"></i>ปิดใช้งาน
-                                            </button>
-                                        <?php endif; ?>
+                                    <div>
+                                        <label>จำนวน</label>
+                                        <input type="text" class="input" name="item_quantity" value="<?= htmlspecialchars($item['quantity'] ?? '', ENT_QUOTES, 'UTF-8'); ?>">
                                     </div>
-                                </div>
+                                    <div>
+                                        <label>Alt Text รูป</label>
+                                        <input type="text" class="input" name="item_image_alt" value="<?= htmlspecialchars($item['image_alt'] ?? '', ENT_QUOTES, 'UTF-8'); ?>">
+                                    </div>
+                                    <div>
+                                        <label>สเปก</label>
+                                        <input type="text" class="input" name="item_specs" value="<?= htmlspecialchars($item['specs'] ?? '', ENT_QUOTES, 'UTF-8'); ?>">
+                                    </div>
+                                    <div>
+                                        <label>หมายเหตุ</label>
+                                        <input type="text" class="input" name="item_notes" value="<?= htmlspecialchars($item['notes'] ?? '', ENT_QUOTES, 'UTF-8'); ?>">
+                                    </div>
+                                    <div style="grid-column:1 / -1;">
+                                        <label>อัปโหลดรูปใหม่ (ถ้ามี)</label>
+                                        <input type="file" class="input" name="item_image" accept="image/jpeg,image/png">
+                                    </div>
+                                    <div style="grid-column:1 / -1;">
+                                        <button type="submit" class="btn btn-primary">บันทึก</button>
+                                    </div>
+                                </form>
+                                <form method="POST" style="margin-top:12px;" onsubmit="return confirm('ยืนยันการลบอุปกรณ์นี้หรือไม่?');">
+                                    <input type="hidden" name="csrf_token" value="<?= generate_csrf_token(); ?>">
+                                    <input type="hidden" name="delete_item" value="1">
+                                    <input type="hidden" name="item_id" value="<?= (int)$item['id']; ?>">
+                                    <button type="submit" class="btn btn-ghost" style="color:#b61c2c; border-color:rgba(220,53,69,0.4);">ลบอุปกรณ์นี้</button>
+                                </form>
                             </div>
-                        </div>
+                        </details>
                     <?php endforeach; ?>
                 </div>
-            </div>
-        </div>
-    </div>
+            <?php endif; ?>
 
-    <!-- Package Modal -->
-    <div class="modal fade" id="packageModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="packageModalTitle">เพิ่มแพ็คเกจใหม่</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <form method="POST" action="" id="packageForm">
-                    <div class="modal-body">
-                        <input type="hidden" name="csrf_token" value="<?php echo generate_csrf_token(); ?>">
-                        <input type="hidden" name="package_id" id="packageId">
-                        
-                        <div class="row">
-                            <div class="col-md-8 mb-3">
-                                <label for="packageName" class="form-label">ชื่อแพ็คเกจ <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control" id="packageName" name="name" required>
-                            </div>
-                            <div class="col-md-4 mb-3">
-                                <label for="packagePrice" class="form-label">ราคา (บาท) <span class="text-danger">*</span></label>
-                                <input type="number" class="form-control" id="packagePrice" name="price" min="0" step="0.01" required>
-                            </div>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label for="packageDescription" class="form-label">คำอธิบาย</label>
-                            <textarea class="form-control" id="packageDescription" name="description" rows="3"></textarea>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label for="equipmentList" class="form-label">รายการอุปกรณ์ <span class="text-danger">*</span></label>
-                            <textarea class="form-control" id="equipmentList" name="equipment_list" rows="5" 
-                                      placeholder="กรอกรายการอุปกรณ์ (แต่ละรายการขึ้นบรรทัดใหม่)" required></textarea>
-                            <small class="text-muted">แต่ละรายการขึ้นบรรทัดใหม่</small>
-                        </div>
-                        
-                        <div class="mb-3 form-check">
-                            <input type="checkbox" class="form-check-input" id="isActive" name="is_active" checked>
-                            <label class="form-check-label" for="isActive">
-                                เปิดใช้งานแพ็คเกจ
-                            </label>
-                        </div>
+            <details class="info-card" style="margin-top:24px;">
+                <summary style="font-weight:600; cursor:pointer;">เพิ่มอุปกรณ์ใหม่ในแพ็คเกจนี้</summary>
+                <form method="POST" enctype="multipart/form-data" class="form-grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-top:16px;">
+                    <input type="hidden" name="csrf_token" value="<?= generate_csrf_token(); ?>">
+                    <input type="hidden" name="add_item" value="1">
+                    <input type="hidden" name="package_id" value="<?= (int)$pkg['id']; ?>">
+
+                    <div>
+                        <label>ชื่ออุปกรณ์ *</label>
+                        <input type="text" class="input" name="item_name" required>
                     </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
-                        <button type="submit" name="save_package" class="btn btn-primary">
-                            <i class="fas fa-save me-2"></i>บันทึก
-                        </button>
+                    <div>
+                        <label>จำนวน</label>
+                        <input type="text" class="input" name="item_quantity">
+                    </div>
+                    <div>
+                        <label>Alt Text รูป</label>
+                        <input type="text" class="input" name="item_image_alt">
+                    </div>
+                    <div>
+                        <label>สเปก</label>
+                        <input type="text" class="input" name="item_specs">
+                    </div>
+                    <div>
+                        <label>หมายเหตุ</label>
+                        <input type="text" class="input" name="item_notes">
+                    </div>
+                    <div style="grid-column:1 / -1;">
+                        <label>อัปโหลดรูป (JPG/PNG สูงสุด 5MB)</label>
+                        <input type="file" class="input" name="item_image" accept="image/jpeg,image/png">
+                    </div>
+                    <div style="grid-column:1 / -1;">
+                        <button type="submit" class="btn btn-primary" style="width:100%;">เพิ่มอุปกรณ์</button>
                     </div>
                 </form>
-            </div>
+            </details>
         </div>
-    </div>
+    <?php endforeach; ?>
+</div>
 
-    <!-- Delete Form -->
-    <form id="deleteForm" method="POST" style="display: none;">
-        <input type="hidden" name="csrf_token" value="<?php echo generate_csrf_token(); ?>">
-        <input type="hidden" name="package_id" id="deletePackageId">
-        <input type="hidden" name="delete_package" value="1">
-    </form>
-
-    <!-- Bootstrap 5 JS -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    
-    <script>
-        function editPackage(packageData) {
-            document.getElementById('packageModalTitle').textContent = 'แก้ไขแพ็คเกจ';
-            document.getElementById('packageId').value = packageData.id;
-            document.getElementById('packageName').value = packageData.name;
-            document.getElementById('packagePrice').value = packageData.price;
-            document.getElementById('packageDescription').value = packageData.description || '';
-            document.getElementById('equipmentList').value = packageData.equipment_list.join('\n');
-            document.getElementById('isActive').checked = packageData.is_active == 1;
-            
-            new bootstrap.Modal(document.getElementById('packageModal')).show();
-        }
-        
-        function deactivatePackage(packageId) {
-            if (confirm('คุณต้องการปิดใช้งานแพ็คเกจนี้หรือไม่?')) {
-                document.getElementById('deletePackageId').value = packageId;
-                document.getElementById('deleteForm').submit();
-            }
-        }
-        
-        // Reset form when modal is closed
-        document.getElementById('packageModal').addEventListener('hidden.bs.modal', function() {
-            document.getElementById('packageModalTitle').textContent = 'เพิ่มแพ็คเกจใหม่';
-            document.getElementById('packageForm').reset();
-            document.getElementById('packageId').value = '';
-        });
-        
-        // Form validation
-        document.getElementById('packageForm').addEventListener('submit', function(e) {
-            const name = document.getElementById('packageName').value.trim();
-            const price = document.getElementById('packagePrice').value;
-            const equipmentList = document.getElementById('equipmentList').value.trim();
-            
-            if (!name || !price || !equipmentList) {
-                e.preventDefault();
-                alert('กรุณากรอกข้อมูลให้ครบถ้วน');
-            }
-        });
-    </script>
-</body>
-</html>
+<?php
+render_admin_page_end();

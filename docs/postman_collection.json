@@ -1,0 +1,78 @@
+{
+  "info": {
+    "name": "Live Streaming Booking API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/pages/api/health.php"
+      }
+    },
+    {
+      "name": "Packages",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/pages/api/packages.php"
+      }
+    },
+    {
+      "name": "Create Booking",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-CSRF-Token", "value": "{{csrfToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"package_id\": 1,\n  \"pickup_date\": \"2025-12-01\",\n  \"return_date\": \"2025-12-03\",\n  \"pickup_time\": \"09:00\",\n  \"return_time\": \"18:00\",\n  \"location\": \"Bangkok\",\n  \"notes\": \"Demo\"\n}"
+        },
+        "url": "{{baseUrl}}/pages/api/bookings.php"
+      }
+    },
+    {
+      "name": "My Bookings",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/pages/api/bookings_me.php"
+      }
+    },
+    {
+      "name": "Create Payment (meta)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-CSRF-Token", "value": "{{csrfToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"booking_code\": \"BK20250101ABCDEF\",\n  \"amount\": 1250,\n  \"payment_method\": \"bank_transfer\",\n  \"transaction_ref\": \"ABC123\",\n  \"notes\": \"Deposit\"\n}"
+        },
+        "url": "{{baseUrl}}/pages/api/payments.php"
+      }
+    },
+    {
+      "name": "Admin: Verify Payment",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-CSRF-Token", "value": "{{csrfToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"id\": 1,\n  \"status\": \"verified\"\n}"
+        },
+        "url": "{{baseUrl}}/pages/api/payments_update.php"
+      }
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "csrfToken", "value": "" }
+  ]
+}

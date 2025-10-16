@@ -1,0 +1,22 @@
+{
+  "name": "live-streaming-booking/system",
+  "description": "Live Streaming Booking System",
+  "type": "project",
+  "require": {},
+  "require-dev": {
+    "phpunit/phpunit": "^10.5 || ^11.0"
+  },
+  "autoload": {
+    "classmap": [
+      "models/"
+    ],
+    "files": [
+      "includes/config.php",
+      "includes/functions.php"
+    ]
+  },
+  "scripts": {
+    "test": "vendor/bin/phpunit"
+  }
+}
+

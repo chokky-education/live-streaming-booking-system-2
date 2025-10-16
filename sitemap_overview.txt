@@ -1,0 +1,43 @@
+Goal & Audience
+
+  - เว็บไซต์นี้เน้นให้สตูดิโอ/ทีมไลฟ์สตรีมและธุรกิจที่ต้องเช่าอุปกรณ์สามารถจอง ชำระเงิน และติดตามสถานะได้ครบวงจร (B2B2SME focus)
+  - กลุ่มผู้ใช้หลักคือเจ้าของหรือผู้จัดการทีมสตรีม, โปรดักชันเฮาส์ขนาดเล็ก-กลาง, ลูกค้าที่เป็นฝ่ายอีเวนต์ อีกฝั่งคือทีมแอดมินภายในที่ต้องบริหารอุปกรณ์
+  - เส้นทางหลัก: ผู้ใช้ใหม่เข้าหน้า Landing → สำรวจแพ็กเกจ/รีวิว → สมัครสมาชิก → เลือกแพ็กเกจและวันที่ → ชำระเงินด้วยการอัปโหลดสลิป → ติดตามสถานะจากหน้าโปรไฟล์
+  - สำหรับแอดมิน: เข้าสู่ระบบ → ดูแดชบอร์ดสถิติ → ตรวจสอบการจองและสลิป → อัปเดตแพ็กเกจ/รายงาน
+  - ย้ำว่าลูกค้าคาดว่าจะเริ่มจากข้อมูลแพ็กเกจแล้วไปจบที่การจอง ดังนั้น sitemap ต้องขับเคลื่อนการแปลงเป็นการจองใน 3 คลิก
+
+  Content & Features
+
+  - แพ็กเกจอุปกรณ์ (Basic, Standard, Premium) พร้อมรายละเอียดราคา/อุปกรณ์ย่อยจาก index.php และ Package model
+  - ฟังก์ชันจองแบบ 3 สเต็ป (เลือกแพ็กเกจ → กรอกข้อมูล → ยืนยัน/ชำระ) ที่ผูกกับการคำนวณราคาและตรวจสอบจำนวนว่าง
+  - ระบบอัปโหลดสลิปและตรวจสอบการชำระ, การแจ้งสถานะ (pending/verified/rejected) และการสรุปรายได้
+  - ศูนย์บัญชีลูกค้า: ดูสรุปการจอง, เปลี่ยนโปรไฟล์, ตั้งค่ารหัสผ่าน, ตรวจสอบอีเวนต์ถัดไป
+  - พื้นที่ผู้ดูแล: Dashboard, รายการจอง/การชำระ/แพ็กเกจ/ลูกค้า, รายงานกราฟ, การแจ้งเตือนสถานะ
+  - ขอบเขตในเว็บ: การจอง, การชำระ, ข้อมูลบริษัท, ติดต่อ, เอกสาร PRD ใน docs/; ขอบเขตนอกเว็บ: Help Center เชิงลึก, ช่องทางโซเชียล, ระบบ ticket (สามารถโยงไป subdomain หรือ external link)
+
+  Information Architecture
+
+  - Landing & Conversion: หน้าแรก (index.php), Hero, How it Works, Why Choose Us, Testimonials/Stats, Pricing tiers, CTA “เปิดบัญชี/ดูแพ็กเกจ”, ส่วนติดต่อและลิงก์โซเชียล
+  - Authentication & Onboarding: pages/register.php, pages/login.php, การรีเซ็ตรหัส (เพิ่มในอนาคต), pages/logout.php
+  - Booking & Payment Flow: pages/booking.php (แพ็กเกจ+ฟอร์ม), การตรวจสอบความพร้อม, นำทางไป pages/payment.php สำหรับอัปโหลดสลิปและสรุปการจอง
+  - Customer Account Hub: pages/profile.php พร้อมสรุปสถิติ, แก้ไขข้อมูล, เปลี่ยนรหัสผ่าน, ประวัติการจอง (booking_detail modal)
+  - Support & Resources: anchor #how-it-works, #support, footer links ไป PRD, ติดต่อทีม, Social, FAQ ภายหน้าเดียว (เพิ่ม FAQ/Case Studies เป็น future section)
+  - Admin Portal (แยกเมนูด้านข้าง): Dashboard (pages/admin/dashboard.php), Bookings (bookings.php + booking_detail.php), Payments (payments.php + payment_detail.php), Packages (packages.php),
+  Customers (customers.php), Reports (reports.php), รองรับการเพิ่ม Settings/Inventory ในอนาคต
+
+  UX/UI Considerations
+
+  - ควบคุมความลึกไม่เกิน 3 คลิกจากหน้าแรกถึงการส่งสลิป (Landing → Register/Login → Booking → Payment)
+  - ใช้คำเมนูที่สื่อสารตรง เช่น “แพ็กเกจ”, “ฝ่ายบริการ”, “จองอุปกรณ์”, “อัปโหลดสลิป” และคงรูปแบบไทย/อังกฤษให้สอดคล้อง
+  - รักษา breadcrumb หรือ status stepper ในฟลว์จอง, เพิ่ม alert สีแตกต่างตามสถานะ
+  - เตรียมโครงสร้างรองรับเพิ่มคอนเทนต์ใหม่ เช่นเพิ่มเมนู “Resources” ที่รวบรวม FAQ, Blog, Case Study โดยไม่กระทบ navigation หลัก
+  - สำหรับแอดมินให้ sidebar คงที่, เน้นการค้นหา/กรองในรายการจองและการชำระ, ปรับ responsive ให้ใช้งานได้บนแท็บเล็ต
+  - ปรับภาษา/สกุลเงินให้ตั้งค่าได้ในอนาคต (รองรับตลาดภูมิภาค)
+
+  Business & SEO Alignment
+
+  - คีย์เวิร์ดหลัก: “จองอุปกรณ์ไลฟ์สตรีม”, “บริการให้เช่าอุปกรณ์ถ่ายทอดสด”, “ระบบจอง Live Streaming”, “เช่าอุปกรณ์สตูดิโอ”, “workflow การเงินไลฟ์”
+  - URL/Slug ควรเป็นภาษาอังกฤษสั้นๆ เช่น /pricing, /solutions, /resources/blog เพื่อความเป็นมิตรกับ SEO และรองรับคีย์เวิร์ด
+  - หน้าธุรกิจสำคัญที่ต้องมี: Pricing (อยู่บน Landing/ไฮไลต์เพิ่มหน้าเฉพาะ), About/Company Info (เพิ่ม section หรือหน้าใหม่), Contact/Support, Legal/Privacy (สร้างหน้าอย่าง pages/privacy.php, pages/terms.php)
+  - ผูก CTA “เปิดบัญชี” กับ Conversion tracking; เพิ่ม Schema markup สำหรับ Product/Service และ FAQ เมื่อมีคอนเทนต์
+  - ดูแล Meta title/description ตามวัตถุประสงค์แต่ละหน้า (เช่น หน้าแพ็กเกจเน้น “เช่าอุปกรณ์ไลฟ์สตรีมแบบครบวงจร - จองออนไลน์ได้ทันที”)

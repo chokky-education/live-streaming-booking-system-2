@@ -1,29 +1,46 @@
-# PHP
-*.log
-*.tmp
-*.cache
-
-# Database config (ไม่ควรอัพขึ้น GitHub - ถ้าต้องการความปลอดภัย)
-# config/database.php
-
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS files
+# OS
 .DS_Store
-Thumbs.db
 
-# Temporary files
-tmp/
-temp/
-
-# Sensitive files
-*.env
+# Env
+.env
 .env.local
-.env.production
 
-# Kiro files (optional - ถ้าไม่ต้องการแชร์)
+# Logs
+logs/
+!logs/.gitkeep
+
+# Uploads
+uploads/*
+!uploads/.gitkeep
+!uploads/slips/
+uploads/slips/*
+!uploads/slips/.gitkeep
+!uploads/package-items/
+uploads/package-items/*
+!uploads/package-items/.gitkeep
+
+# Vendor/Dependencies (if added later)
+vendor/
+composer.lock
+
+# Node (if used later)
+node_modules/
+package-lock.json
+
+# Tool-specific artifacts
+.codex2/
+.bmad-core/
 .kiro/
+.vscode/
+
+# Local session exports
+admin_cookies.txt
+customer_cookies.txt
+cookies.txt
+
+# Editor workspace files
+*.code-workspace
+
+# Archives
+*.zip
+docs++/

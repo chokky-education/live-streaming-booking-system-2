@@ -1,35 +1,23 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `pages/` holds user and admin PHP entry points; `pages/api/` serves JSON endpoints consumed by the UI.
-- `models/` contains PDO-backed domain classes (e.g. `Booking.php`) autoloaded via Composer.
-- `includes/` centralizes bootstrap code (`config.php`) and shared helpers (`functions.php`).
-- `assets/` stores static CSS/JS/images served by the web root; `database/` provides `create_database.sql`.
-- `tests/` hosts PHPUnit suites with `tests/bootstrap.php`; `scripts/` bundles CLI utilities (`start.sh`, `cleanup_ledger.php`).
+`pages/` hosts user and admin entry points, while `pages/api/` serves JSON endpoints for the UI. Domain rules stay in Composer-autoloaded PDO models under `models/`. Shared bootstrap helpers live in `includes/` (`config.php`, `functions.php`). Static assets belong in `assets/`; database schema and seeds in `database/`; PHPUnit suites in `tests/`; CLI tools in `scripts/`. Keep logs, caches, uploads, and backups within their dedicated top-level directories.
 
 ## Build, Test, and Development Commands
-- `composer install` — install PHP dependencies and register autoloaders.
-- `php -S localhost:8080` or `./scripts/start.sh` — run the development server (port configurable via `PORT`).
-- `docker-compose up -d` — launch PHP+Apache and MySQL stack; follow with `docker-compose down -v` when finished.
-- `php scripts/db_import.sh` — import `database/create_database.sql` using `DB_*` environment variables.
-- `composer test` (alias for `vendor/bin/phpunit -c phpunit.xml.dist`) — execute automated tests.
+- `composer install` installs dependencies and refreshes autoloaders.
+- `php -S localhost:8080` or `./scripts/start.sh` serves the app; set `PORT=9090` (or similar) to change the port.
+- `docker-compose up -d` provisions Apache/PHP and MySQL containers; run `docker-compose down -v` when finished.
+- `php scripts/db_import.sh` loads `database/create_database.sql` using the configured `DB_*` environment variables.
+- `composer test` (alias `vendor/bin/phpunit -c phpunit.xml.dist`) runs the automated suite; keep it green before commits.
 
 ## Coding Style & Naming Conventions
-- Follow PSR-12 formatting with 4-space indentation; prefer short array syntax and nullable type hints where available.
-- Name classes and files in PascalCase (`models/Booking.php`), functions/helpers in snake_case, and API endpoints in lower_snake (`pages/api/booking_create.php`).
-- Keep controllers thin: move validation and pricing logic into models or helpers; reuse `json_response` and logging utilities.
+Follow PSR-12 with 4-space indentation, strict typing declarations, and short array syntax. Use PascalCase for classes and filenames (`models/Booking.php`), snake_case for helpers, and lower_snake for API files (`pages/api/booking_create.php`). Keep controllers slim by delegating validation, pricing, and side effects to models or shared helpers, and reuse `json_response()` plus the logging utilities for consistent envelopes.
 
 ## Testing Guidelines
-- Extend `PHPUnit\\Framework\\TestCase`; place unit tests under `tests/Unit` mirroring source namespaces.
-- Use `tests/bootstrap.php` to configure environment helpers (e.g., `__set_booking_holidays_env`) and avoid hitting the real database.
-- Include regression scenarios for pricing rules, validation paths, and API envelopes; provide fixture data inline or via dedicated builders.
+Tests extend `PHPUnit\\Framework\\TestCase` and live under `tests/Unit`, mirroring source namespaces. Bootstrap fixtures through `tests/bootstrap.php` to toggle helpers like `__set_booking_holidays_env()` and avoid real database calls. Target regression coverage for pricing rules, validation flows, and API response contracts, and only push after `composer test` passes locally.
 
 ## Commit & Pull Request Guidelines
-- Write commits in imperative voice with concise subjects (`Add Windows installation guide`) and explanatory bodies when behavior changes.
-- Reference issues in commit bodies or PR descriptions; summarize scope, test evidence, and deployment considerations.
-- For UI-facing changes, attach before/after screenshots or screencasts and update documentation or sample configs as needed.
+Write commits in imperative mood (e.g., `Add Windows installation guide`) and keep scope focused. Reference related issues in commit bodies or PR descriptions, state behavioural changes, and document how you validated the work. UI updates should include before/after screenshots or screencasts; note any deployment or data-migration steps that reviewers must follow.
 
-## Environment & Security Notes
-- Copy `config/database.example.php` to `config/database.php` for local overrides; never commit secrets or `.env` dumps.
-- Restrict writable directories to `uploads/`, `logs/`, `cache/`, and `backups/`; ensure permissions are hardened in production.
-- Leave CSRF protection and session hardening toggles enabled in `includes/config.php`; document any temporary overrides in the PR.
+## Security & Configuration Tips
+Copy `config/database.example.php` to `config/database.php` for local overrides and never commit secrets or `.env` dumps. Restrict writable permissions to `uploads/`, `logs/`, `cache/`, and `backups/`. Leave CSRF and session-hardening toggles enabled in `includes/config.php`, document any temporary overrides, and revert them quickly.

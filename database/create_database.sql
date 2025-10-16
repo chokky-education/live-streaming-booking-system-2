@@ -33,9 +33,26 @@ CREATE TABLE packages (
     equipment_list JSON,
     image_url VARCHAR(255),
     is_active BOOLEAN DEFAULT TRUE,
+    max_concurrent_reservations INT NOT NULL DEFAULT 5,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_active (is_active),
     INDEX idx_price (price)
+) ENGINE=InnoDB;
+
+-- ตาราง package_items สำหรับเก็บรายละเอียดอุปกรณ์ย่อยในแต่ละแพ็คเกจ
+CREATE TABLE package_items (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    package_id INT NOT NULL,
+    name VARCHAR(120) NOT NULL,
+    quantity VARCHAR(50) DEFAULT NULL,
+    specs TEXT,
+    notes TEXT,
+    image_path VARCHAR(255),
+    image_alt VARCHAR(150),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE,
+    INDEX idx_package_items_package (package_id)
 ) ENGINE=InnoDB;
 
 -- ตาราง bookings สำหรับการจอง
@@ -44,21 +61,43 @@ CREATE TABLE bookings (
     booking_code VARCHAR(20) UNIQUE NOT NULL,
     user_id INT NOT NULL,
     package_id INT NOT NULL,
-    booking_date DATE NOT NULL,
-    start_time TIME,
-    end_time TIME,
+    pickup_date DATE NOT NULL,
+    return_date DATE NOT NULL,
+    pickup_time TIME DEFAULT '09:00',
+    return_time TIME DEFAULT '18:00',
+    rental_days INT GENERATED ALWAYS AS (DATEDIFF(return_date, pickup_date) + 1) STORED,
     location TEXT,
     notes TEXT,
     total_price DECIMAL(10,2) NOT NULL,
     status ENUM('pending', 'confirmed', 'cancelled', 'completed') DEFAULT 'pending',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CHECK (return_date >= pickup_date),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE RESTRICT,
-    INDEX idx_booking_date (booking_date),
+    INDEX idx_pickup_date (pickup_date),
+    INDEX idx_return_date (return_date),
+    INDEX idx_package_range (package_id, pickup_date, return_date),
+    INDEX idx_package_status_dates (package_id, status, pickup_date, return_date),
     INDEX idx_status (status),
     INDEX idx_user_bookings (user_id, created_at),
     INDEX idx_booking_code (booking_code)
+) ENGINE=InnoDB;
+
+-- ตาราง equipment_availability สำหรับติดตามสถานะอุปกรณ์รายวัน
+CREATE TABLE equipment_availability (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    package_id INT NOT NULL,
+    booking_id INT NULL,
+    date DATE NOT NULL,
+    status ENUM('reserved', 'picked_up', 'returned', 'maintenance') DEFAULT 'reserved',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE,
+    FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE CASCADE,
+    UNIQUE KEY uniq_package_booking (package_id, booking_id, date),
+    INDEX idx_package_date (package_id, date),
+    INDEX idx_booking (booking_id)
 ) ENGINE=InnoDB;
 
 -- ตาราง payments สำหรับการชำระเงิน
@@ -125,28 +164,44 @@ INSERT INTO users (username, password, email, first_name, last_name, role) VALUE
 ('admin', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'admin@livestreaming.com', 'ผู้ดูแล', 'ระบบ', 'admin');
 
 -- เพิ่มแพ็คเกจอุปกรณ์
-INSERT INTO packages (name, description, price, equipment_list, is_active) VALUES 
+INSERT INTO packages (name, description, price, equipment_list, is_active, max_concurrent_reservations) VALUES 
 (
     'แพ็คเกจพื้นฐาน (Basic Package)',
     'เหมาะสำหรับการถ่ายทอดสดขนาดเล็ก เช่น การขายของออนไลน์ การสัมภาษณ์',
     2500.00,
     JSON_ARRAY('กล้อง DSLR/Mirrorless 1 ตัว', 'ไมโครโฟน 1 ตัว'),
-    TRUE
+    TRUE,
+    5
 ),
 (
     'แพ็คเกจมาตรฐาน (Standard Package)',
     'เหมาะสำหรับงานสัมมนา การประชุม หรืองานขนาดกลาง',
     4500.00,
     JSON_ARRAY('กล้อง DSLR/Mirrorless 2 ตัว', 'ไมโครโฟน 2 ตัว', 'ไฟ LED 2 ชุด'),
-    TRUE
+    TRUE,
+    5
 ),
 (
     'แพ็คเกจพรีเมี่ยม (Premium Package)',
     'เหมาะสำหรับงานแต่งงาน อีเวนต์ใหญ่ หรืองานที่ต้องการคุณภาพสูง',
     7500.00,
     JSON_ARRAY('กล้อง DSLR/Mirrorless 3 ตัว', 'ไมโครโฟน 3 ตัว', 'ไฟ LED 4 ชุด', 'ขาตั้งกล้อง 3 ชุด', 'Switcher/Mixer 1 ตัว'),
-    TRUE
+    TRUE,
+    5
 );
+
+-- เพิ่มรายการอุปกรณ์ย่อยตัวอย่างสำหรับแต่ละแพ็คเกจ
+INSERT INTO package_items (package_id, name, quantity, specs, notes) VALUES
+(1, 'กล้อง DSLR/Mirrorless', '1 ชุด', 'ความละเอียด 4K พร้อมกันสั่น', 'รวมเลนส์มาตรฐาน'),
+(1, 'ไมโครโฟน Lavalier', '1 ตัว', 'รับเสียงชัดเจน ลดเสียงรบกวน', NULL),
+(1, 'ขาตั้งกล้อง', '1 ตัว', 'อลูมิเนียม น้ำหนักเบา', NULL),
+(2, 'กล้อง Mirrorless', '2 ชุด', 'บันทึกได้พร้อมกัน 2 มุม', 'มาพร้อมเลนส์ 24-70mm'),
+(2, 'ไมโครโฟนไร้สาย', '2 ตัว', 'ระยะทำการ 50 เมตร', NULL),
+(2, 'ไฟ LED', '2 ชุด', 'ปรับอุณหภูมิสีได้ 3200K-5600K', 'มี softbox'),
+(3, 'กล้อง Cinema', '3 ชุด', 'รองรับการบันทึก 10bit 4:2:2', 'พร้อมเลนส์ prime'),
+(3, 'ชุดไมโครโฟนสตูดิโอ', '3 ตัว', 'มี preamp ในตัว', 'พร้อมขาตั้งและ pop filter'),
+(3, 'ชุดไฟสตูดิโอ', '4 ชุด', 'ไฟต่อเนื่อง CRI>95', NULL),
+(3, 'Switcher/Mixer', '1 ตัว', 'สลับสัญญาณภาพได้ 4 ช่อง', 'รวม Software control');
 
 -- เพิ่มอุปกรณ์ตัวอย่าง
 INSERT INTO equipment (name, type, brand, model, daily_price, is_available, package_id) VALUES 
@@ -161,15 +216,17 @@ INSERT INTO equipment (name, type, brand, model, daily_price, is_available, pack
 -- สร้าง View สำหรับสถิติการจอง
 CREATE VIEW booking_statistics AS
 SELECT 
-    DATE(created_at) as booking_date,
+    pickup_date,
+    return_date,
+    SUM(rental_days) as total_rental_days,
     COUNT(*) as total_bookings,
     SUM(total_price) as total_revenue,
     COUNT(CASE WHEN status = 'confirmed' THEN 1 END) as confirmed_bookings,
     COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_bookings,
     COUNT(CASE WHEN status = 'cancelled' THEN 1 END) as cancelled_bookings
 FROM bookings 
-GROUP BY DATE(created_at)
-ORDER BY booking_date DESC;
+GROUP BY pickup_date, return_date
+ORDER BY pickup_date DESC;
 
 -- สร้าง View สำหรับรายงานแพ็คเกจยอดนิยม
 CREATE VIEW popular_packages AS

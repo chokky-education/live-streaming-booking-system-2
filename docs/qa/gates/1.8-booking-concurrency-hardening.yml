@@ -1,0 +1,43 @@
+schema: 1
+story: '1.8'
+story_title: 'Booking Concurrency Hardening'
+gate: PASS
+status_reason: 'Transaction locking and capacity logging validated via smoke test and lint checks.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2025-09-26T00:00:00Z'
+
+quality_score: 100
+expires: '2025-10-10T00:00:00Z'
+
+top_issues: []
+waiver:
+  active: false
+
+evidence:
+  tests_reviewed: 2
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: 'Transaction flow keeps existing auth model; no new exposure.'
+  performance:
+    status: PASS
+    notes: 'Smoke test confirms capacity enforcement without extra latency; cache unaffected.'
+  reliability:
+    status: PASS
+    notes: 'Concurrent attempts limited to declared capacity; warnings loggedสำหรับการติดตาม.'
+  maintainability:
+    status: PASS
+    notes: 'โค้ดใหม่จัดระเบียบชัดเจน มี helper แยก usage map/logging พร้อมสคริปต์ทดสอบประกอบ.'
+
+recommendations:
+  immediate: []
+  future:
+    - action: 'พิจารณาใส่สคริปต์ stress test ในนโยบาย CI เพื่อจับ regression ในอนาคต'
+      refs:
+        - scripts/tests/booking_concurrency_smoke.php
+      suggested_owner: dev

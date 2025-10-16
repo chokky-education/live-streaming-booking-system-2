@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2025-10-03T00:00:00.000Z" agent="5.0 (Mac)" version="24.6.5" type="device">
+  <diagram id="sequence-all-actors" name="Actor Sequence">
+    <mxGraphModel dx="827" dy="579" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="2" value="@startuml\ntitle Guest to Admin Multi-Use Case Flow\n\nactor Guest\nactor User\nactor Admin\n\n== Registration ==\nGuest -&gt; Admin: Submit registration details\nalt Missing information\n  Admin --&gt; Guest: Request additional details\nelse Approved\n  Admin --&gt; Guest: Provide approval &amp; credentials\n  Guest -&gt; User: Activate account (role change)\nend\n\n== Multi-day booking ==\nUser -&gt; Admin: Request availability (package + dates)\nAdmin --&gt; User: Share availability &amp; pricing summary\nalt Dates unavailable\n  Admin --&gt; User: Decline booking (conflict)\nelse Dates confirmed\n  User -&gt; Admin: Confirm booking request\n  Admin --&gt; User: Return booking code &amp; schedule details\nend\n\n== Payment verification ==\nUser -&gt; Admin: Upload payment slip metadata\nAdmin --&gt; User: Confirm payment verification\nalt Slip invalid\n  Admin --&gt; User: Reject slip; request resubmission\nend\n\n== Package management broadcast ==\nAdmin -&gt; User: Publish updated package contents\nUser --&gt; Admin: Acknowledge update / share feedback\n@enduml" style="shape=plantuml;whiteSpace=wrap;html=1;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="20" y="20" width="760" height="1040" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

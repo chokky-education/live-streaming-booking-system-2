@@ -4,9 +4,10 @@
  * ระบบจองอุปกรณ์ Live Streaming
  */
 
-class Payment {
-    private $conn;
-    private $table_name = "payments";
+require_once __DIR__ . '/BaseModel.php';
+
+class Payment extends BaseModel {
+    protected $table_name = "payments";
 
     public $id;
     public $booking_id;
@@ -21,8 +22,9 @@ class Payment {
     public $notes;
     public $created_at;
 
+    // Constructor uses parent
     public function __construct($db) {
-        $this->conn = $db;
+        parent::__construct($db);
     }
 
     /**
@@ -93,7 +95,7 @@ class Payment {
      */
     public function getById($id) {
         $query = "SELECT p.*, b.booking_code, b.total_price as booking_total,
-                         u.first_name, u.last_name, u.email,
+                         u.first_name, u.last_name, u.email, u.phone,
                          pkg.name as package_name
                   FROM " . $this->table_name . " p
                   LEFT JOIN bookings b ON p.booking_id = b.id
@@ -160,17 +162,24 @@ class Payment {
     /**
      * อัปโหลดสลิปการโอนเงิน
      */
-    public function uploadSlip($file) {
+    public function uploadSlip($file, $old_slip_url = null) {
         // ตรวจสอบไฟล์
         $validation = $this->validateSlipUpload($file);
         if (!$validation['success']) {
             return $validation;
         }
 
-        // สร้างชื่อไฟล์ใหม่
+        // สร้างชื่อไฟล์ใหม่แบบสุ่ม
         $file_extension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-        $new_filename = 'slip_' . $this->booking_id . '_' . time() . '.' . $file_extension;
-        $upload_path = '../uploads/slips/';
+        try {
+            $rand = bin2hex(random_bytes(16));
+        } catch (Exception $e) {
+            $rand = uniqid('slip_', true);
+        }
+        $new_filename = $rand . '.' . $file_extension;
+        // ใช้ path แบบ absolute เพื่อให้ทำงานได้จากทุกหน้า
+        $base_dir = dirname(__DIR__); // project root
+        $upload_path = $base_dir . '/uploads/slips/';
         
         // สร้างโฟลเดอร์ถ้ายังไม่มี
         if (!file_exists($upload_path)) {
@@ -180,7 +189,21 @@ class Payment {
         $full_path = $upload_path . $new_filename;
         
         // อัปโหลดไฟล์
-        if (move_uploaded_file($file['tmp_name'], $full_path)) {
+        $moved = move_uploaded_file($file['tmp_name'], $full_path);
+        if (!$moved && PHP_SAPI === 'cli') {
+            // ใน CLI (ใช้กับ automated tests) move_uploaded_file จะล้มเหลวเพราะไฟล์ไม่ได้อัปโหลดผ่าน HTTP
+            // อนุญาต fallback เป็น rename เพื่อรองรับการทดสอบอัตโนมัติ โดยยังใช้เส้นทางปลายทางเดียวกัน
+            $moved = rename($file['tmp_name'], $full_path);
+        }
+
+        if ($moved) {
+            // ลบไฟล์เก่า (ถ้ามีและอยู่ในโฟลเดอร์ที่กำหนด)
+            if ($old_slip_url) {
+                $old_path = $base_dir . '/' . ltrim($old_slip_url, '/');
+                if (strpos(realpath($old_path) ?: '', realpath($upload_path)) === 0 && file_exists($old_path)) {
+                    @unlink($old_path);
+                }
+            }
             $this->slip_image_url = 'uploads/slips/' . $new_filename;
             return ['success' => true, 'filename' => $new_filename];
         } else {
@@ -306,9 +329,25 @@ class Payment {
      */
     public function getTotalRevenue($start_date = null, $end_date = null) {
         $where_clause = "WHERE p.status = 'verified'";
-        
-        if ($start_date && $end_date) {
+        $params = [];
+
+        $startBoundary = $this->normalizeDateBoundary($start_date, false);
+        $endBoundary = $this->normalizeDateBoundary($end_date, true, $startBoundary);
+
+        if ($startBoundary && !$endBoundary) {
+            $endBoundary = (new DateTime($startBoundary))->modify('last day of this month')->format('Y-m-d');
+        }
+
+        if ($startBoundary && $endBoundary) {
             $where_clause .= " AND DATE(p.verified_at) BETWEEN :start_date AND :end_date";
+            $params[':start_date'] = $startBoundary;
+            $params[':end_date'] = $endBoundary;
+        } elseif ($startBoundary) {
+            $where_clause .= " AND DATE(p.verified_at) >= :start_date";
+            $params[':start_date'] = $startBoundary;
+        } elseif ($endBoundary) {
+            $where_clause .= " AND DATE(p.verified_at) <= :end_date";
+            $params[':end_date'] = $endBoundary;
         }
 
         $query = "SELECT 
@@ -318,15 +357,47 @@ class Payment {
                   $where_clause";
 
         $stmt = $this->conn->prepare($query);
-        
-        if ($start_date && $end_date) {
-            $stmt->bindParam(":start_date", $start_date);
-            $stmt->bindParam(":end_date", $end_date);
+        foreach ($params as $key => $value) {
+            $stmt->bindValue($key, $value);
         }
-        
+
         $stmt->execute();
 
         return $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+
+    private function normalizeDateBoundary($value, $isEnd = false, $startReference = null) {
+        if ($value === null) {
+            return null;
+        }
+
+        $value = trim($value);
+        if ($value === '') {
+            return null;
+        }
+
+        $date = DateTime::createFromFormat('Y-m-d', $value);
+        if ($date instanceof DateTime) {
+            return $date->format('Y-m-d');
+        }
+
+        $ym = DateTime::createFromFormat('Y-m', $value);
+        if ($ym instanceof DateTime) {
+            if ($isEnd) {
+                $ym->modify('last day of this month');
+            } else {
+                $ym->modify('first day of this month');
+            }
+            return $ym->format('Y-m-d');
+        }
+
+        if ($isEnd && $startReference) {
+            $fallback = new DateTime($startReference);
+            $fallback->modify('last day of this month');
+            return $fallback->format('Y-m-d');
+        }
+
+        return null;
     }
 
     /**

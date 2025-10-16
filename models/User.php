@@ -4,9 +4,10 @@
  * ระบบจองอุปกรณ์ Live Streaming
  */
 
-class User {
-    private $conn;
-    private $table_name = "users";
+require_once __DIR__ . '/BaseModel.php';
+
+class User extends BaseModel {
+    protected $table_name = "users";
 
     public $id;
     public $username;
@@ -18,8 +19,9 @@ class User {
     public $role;
     public $created_at;
 
+    // Constructor uses parent
     public function __construct($db) {
-        $this->conn = $db;
+        parent::__construct($db);
     }
 
     /**
@@ -171,10 +173,21 @@ class User {
      * ดึงรายชื่อลูกค้าทั้งหมด (สำหรับ admin)
      */
     public function getAllCustomers() {
-        $query = "SELECT id, username, email, phone, first_name, last_name, created_at 
-                  FROM " . $this->table_name . " 
-                  WHERE role = 'customer' 
-                  ORDER BY created_at DESC";
+        $query = "SELECT 
+                        u.id,
+                        u.username,
+                        u.email,
+                        u.phone,
+                        u.first_name,
+                        u.last_name,
+                        u.created_at,
+                        COUNT(b.id) AS total_bookings,
+                        COALESCE(SUM(CASE WHEN b.status IN ('confirmed', 'completed') THEN b.total_price ELSE 0 END), 0) AS total_spent
+                  FROM " . $this->table_name . " u
+                  LEFT JOIN bookings b ON u.id = b.user_id
+                  WHERE u.role = 'customer'
+                  GROUP BY u.id, u.username, u.email, u.phone, u.first_name, u.last_name, u.created_at
+                  ORDER BY u.created_at DESC";
 
         $stmt = $this->conn->prepare($query);
         $stmt->execute();

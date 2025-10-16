@@ -4,12 +4,13 @@
  * รองรับการจองแบบหลายวันพร้อมระบบ ledger ความพร้อมใช้งาน
  */
 
+require_once __DIR__ . '/BaseModel.php';
+
 class CapacityConflictException extends Exception {}
 
-class Booking {
-    private $conn;
-    private $table_name = "bookings";
+class Booking extends BaseModel {
     private $packageCapacityCache = [];
+    protected $table_name = "bookings";
 
     public $id;
     public $booking_code;
@@ -27,8 +28,9 @@ class Booking {
     public $created_at;
     public $error_code;
 
+    // Constructor uses parent
     public function __construct($db) {
-        $this->conn = $db;
+        parent::__construct($db);
     }
 
     /**
@@ -107,6 +109,8 @@ class Booking {
 
             $this->seedAvailabilityLedger();
 
+            availability_cache_invalidate($this->package_id);
+
             $this->conn->commit();
             return true;
         } catch (CapacityConflictException $conflict) {
@@ -124,7 +128,7 @@ class Booking {
      */
     public function getById($id) {
         $query = "SELECT b.*, p.name as package_name, p.price as package_price,
-                         u.first_name, u.last_name, u.email, u.phone
+                         u.first_name, u.last_name, u.email, u.phone, u.username
                   FROM " . $this->table_name . " b
                   LEFT JOIN packages p ON b.package_id = p.id
                   LEFT JOIN users u ON b.user_id = u.id
@@ -150,7 +154,7 @@ class Booking {
      */
     public function getByBookingCode($booking_code) {
         $query = "SELECT b.*, p.name as package_name, p.price as package_price,
-                         u.first_name, u.last_name, u.email, u.phone
+                         u.first_name, u.last_name, u.email, u.phone, u.username
                   FROM " . $this->table_name . " b
                   LEFT JOIN packages p ON b.package_id = p.id
                   LEFT JOIN users u ON b.user_id = u.id
@@ -200,7 +204,7 @@ class Booking {
         }
 
         $query = "SELECT b.*, p.name as package_name, p.price as package_price,
-                         u.first_name, u.last_name, u.email, u.phone
+                         u.first_name, u.last_name, u.email, u.phone, u.username
                   FROM " . $this->table_name . " b
                   LEFT JOIN packages p ON b.package_id = p.id
                   LEFT JOIN users u ON b.user_id = u.id
@@ -238,6 +242,7 @@ class Booking {
             if (in_array($status, ['cancelled', 'completed'], true)) {
                 $this->deleteAvailabilityLedger();
             }
+            availability_cache_invalidate($this->package_id);
             return true;
         }
 
@@ -250,6 +255,206 @@ class Booking {
 
     public function confirm() {
         return $this->updateStatus('confirmed');
+    }
+
+    /**
+     * ตรวจสอบว่าผู้ใช้สามารถแก้ไขหรือยกเลิกการจองได้หรือไม่
+     */
+    public function customerCanModify(int $booking_id, int $user_id): array {
+        $booking = $this->fetchBookingForCustomer($booking_id, $user_id, false);
+
+        if (!$booking) {
+            return [
+                'allowed' => false,
+                'reason' => 'ไม่พบการจองนี้หรือคุณไม่มีสิทธิ์เข้าถึง',
+            ];
+        }
+
+        if ($booking['status'] !== 'pending') {
+            return [
+                'allowed' => false,
+                'reason' => 'ไม่สามารถแก้ไขการจองสถานะ ' . $booking['status'],
+            ];
+        }
+
+        if ($this->hasVerifiedPayment($booking['id'])) {
+            return [
+                'allowed' => false,
+                'reason' => 'ไม่สามารถแก้ไขเมื่อมีการยืนยันการชำระเงินแล้ว',
+            ];
+        }
+
+        return [
+            'allowed' => true,
+            'reason' => 'สามารถดำเนินการได้',
+        ];
+    }
+
+    /**
+     * อัปเดตรายละเอียดการจองโดยผู้ใช้ปลายทาง (รองรับแก้ไขวันที่ เวลา สถานที่ และโน้ต)
+     */
+    public function updateByCustomer(int $booking_id, int $user_id, array $payload): array {
+        try {
+            $this->conn->beginTransaction();
+
+            $booking = $this->fetchBookingForCustomer($booking_id, $user_id, true);
+            if (!$booking) {
+                throw new Exception('ไม่พบการจองนี้หรือคุณไม่มีสิทธิ์แก้ไข');
+            }
+
+            if ($booking['status'] !== 'pending') {
+                throw new Exception('ไม่สามารถแก้ไขการจองสถานะ ' . $booking['status']);
+            }
+
+            if ($this->hasVerifiedPayment($booking_id)) {
+                throw new Exception('ไม่สามารถแก้ไขเมื่อมีการยืนยันการชำระเงินแล้ว');
+            }
+
+            $new_pickup_date = $payload['pickup_date'] ?? $booking['pickup_date'];
+            $new_return_date = $payload['return_date'] ?? $booking['return_date'];
+            $new_pickup_time = $payload['pickup_time'] ?? $booking['pickup_time'] ?? BOOKING_DEFAULT_PICKUP_TIME;
+            $new_return_time = $payload['return_time'] ?? $booking['return_time'] ?? BOOKING_DEFAULT_RETURN_TIME;
+            $new_location = isset($payload['location']) ? $this->sanitizeValue($payload['location']) : $booking['location'];
+            $new_notes = isset($payload['notes']) ? $this->sanitizeValue($payload['notes']) : $booking['notes'];
+
+            $validationData = [
+                'package_id' => (int)$booking['package_id'],
+                'pickup_date' => $new_pickup_date,
+                'return_date' => $new_return_date,
+                'pickup_time' => $new_pickup_time,
+                'return_time' => $new_return_time,
+                'location' => $new_location,
+                'notes' => $new_notes,
+            ];
+
+            $errors = $this->validate($validationData);
+            if (!empty($errors)) {
+                throw new Exception(implode('\n', $errors));
+            }
+
+            $isAvailable = $this->checkPackageAvailability(
+                (int)$booking['package_id'],
+                $new_pickup_date,
+                $new_return_date,
+                $booking_id,
+                true
+            );
+
+            if (!$isAvailable) {
+                throw new Exception('แพ็คเกจไม่ว่างในช่วงวันที่ที่เลือก');
+            }
+
+            $pricing = $this->calculatePricingBreakdown((float)$booking['package_price'], $new_pickup_date, $new_return_date);
+            $subtotal = $pricing['subtotal'];
+            $vatAmount = $subtotal * VAT_RATE;
+            $totalPrice = $subtotal + $vatAmount;
+
+            $update = $this->conn->prepare(
+                'UPDATE ' . $this->table_name . ' SET
+                    pickup_date = :pickup_date,
+                    return_date = :return_date,
+                    pickup_time = :pickup_time,
+                    return_time = :return_time,
+                    location = :location,
+                    notes = :notes,
+                    total_price = :total_price,
+                    updated_at = NOW()
+                 WHERE id = :id'
+            );
+
+            $update->bindValue(':pickup_date', $new_pickup_date);
+            $update->bindValue(':return_date', $new_return_date);
+            $update->bindValue(':pickup_time', $new_pickup_time);
+            $update->bindValue(':return_time', $new_return_time);
+            $update->bindValue(':location', $new_location);
+            $update->bindValue(':notes', $new_notes);
+            $update->bindValue(':total_price', $totalPrice);
+            $update->bindValue(':id', $booking_id, PDO::PARAM_INT);
+
+            if (!$update->execute()) {
+                throw new Exception('ไม่สามารถบันทึกข้อมูลการจองได้');
+            }
+
+            $this->hydrateFromRow(array_merge($booking, [
+                'pickup_date' => $new_pickup_date,
+                'return_date' => $new_return_date,
+                'pickup_time' => $new_pickup_time,
+                'return_time' => $new_return_time,
+                'location' => $new_location,
+                'notes' => $new_notes,
+                'total_price' => $totalPrice,
+            ]));
+
+            $this->deleteAvailabilityLedger();
+            $this->seedAvailabilityLedger();
+            availability_cache_invalidate((int)$booking['package_id']);
+
+            $this->conn->commit();
+
+            log_event(sprintf('Customer updated booking %s (id=%d)', $this->booking_code, $booking_id), 'INFO');
+
+            return [
+                'success' => true,
+                'booking' => $this->getById($booking_id),
+            ];
+        } catch (Throwable $e) {
+            $this->conn->rollBack();
+            log_event('Customer update booking error: ' . $e->getMessage(), 'ERROR');
+
+            return [
+                'success' => false,
+                'message' => $e->getMessage(),
+            ];
+        }
+    }
+
+    /**
+     * ยกเลิกการจองโดยลูกค้า (รองรับเฉพาะสถานะ pending และยังไม่ยืนยันการชำระ)
+     */
+    public function cancelByCustomer(int $booking_id, int $user_id, ?string $reason = null): array {
+        try {
+            $this->conn->beginTransaction();
+
+            $booking = $this->fetchBookingForCustomer($booking_id, $user_id, true);
+            if (!$booking) {
+                throw new Exception('ไม่พบการจองนี้หรือคุณไม่มีสิทธิ์ยกเลิก');
+            }
+
+            if ($booking['status'] !== 'pending') {
+                throw new Exception('ไม่สามารถยกเลิกการจองสถานะ ' . $booking['status']);
+            }
+
+            if ($this->hasVerifiedPayment($booking_id)) {
+                throw new Exception('ไม่สามารถยกเลิกเมื่อมีการยืนยันการชำระเงินแล้ว');
+            }
+
+            $this->hydrateFromRow($booking);
+
+            if (!$this->updateStatus('cancelled')) {
+                throw new Exception('ไม่สามารถเปลี่ยนสถานะการจองได้');
+            }
+
+            $this->conn->commit();
+
+            $message = sprintf('Customer cancelled booking %s (id=%d)', $this->booking_code, $booking_id);
+            if ($reason) {
+                $message .= ' Reason: ' . $this->sanitizeValue($reason);
+            }
+            log_event($message, 'INFO');
+
+            return [
+                'success' => true,
+                'message' => 'ยกเลิกการจองสำเร็จ',
+            ];
+        } catch (Throwable $e) {
+            $this->conn->rollBack();
+            log_event('Customer cancel booking error: ' . $e->getMessage(), 'ERROR');
+
+            return [
+                'success' => false,
+                'message' => $e->getMessage(),
+            ];
+        }
     }
 
     /**
@@ -637,6 +842,42 @@ class Booking {
         );
 
         log_event($message, 'WARNING');
+    }
+
+    private function fetchBookingForCustomer(int $booking_id, int $user_id, bool $forUpdate = false): ?array {
+        $query = "SELECT b.*, p.price AS package_price
+                  FROM " . $this->table_name . " b
+                  INNER JOIN packages p ON b.package_id = p.id
+                  WHERE b.id = :booking_id AND b.user_id = :user_id
+                  LIMIT 1";
+
+        if ($forUpdate) {
+            $query .= ' FOR UPDATE';
+        }
+
+        $stmt = $this->conn->prepare($query);
+        $stmt->bindValue(':booking_id', $booking_id, PDO::PARAM_INT);
+        $stmt->bindValue(':user_id', $user_id, PDO::PARAM_INT);
+        $stmt->execute();
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $row ?: null;
+    }
+
+    private function hasVerifiedPayment(int $booking_id): bool {
+        $stmt = $this->conn->prepare('SELECT 1 FROM payments WHERE booking_id = :booking_id AND status = "verified" LIMIT 1');
+        $stmt->bindValue(':booking_id', $booking_id, PDO::PARAM_INT);
+        $stmt->execute();
+
+        return (bool)$stmt->fetchColumn();
+    }
+
+    private function sanitizeValue(string $value): string {
+        if (function_exists('sanitize_input')) {
+            return sanitize_input($value);
+        }
+
+        return htmlspecialchars(strip_tags(trim($value)), ENT_QUOTES, 'UTF-8');
     }
 
     private function getReservationUsageMap($package_id, $start_date, $end_date, $ignore_booking_id = null, $lockRows = false) {

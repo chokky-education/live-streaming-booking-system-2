@@ -1,0 +1,43 @@
+schema: 1
+story: '1.10'
+story_title: 'Availability Integrity & Performance Enhancements'
+gate: PASS
+status_reason: 'Availability API cache validated via smoke test; metadata and documentation updates confirmed.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2025-09-26T00:00:00Z'
+
+quality_score: 100
+expires: '2025-10-10T00:00:00Z'
+
+top_issues: []
+waiver:
+  active: false
+
+evidence:
+  tests_reviewed: 2
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: 'No auth changes; cache stores read-only availability data on disk.'
+  performance:
+    status: PASS
+    notes: 'Cache hit behaviour verified; TTL configurable via env.'
+  reliability:
+    status: PASS
+    notes: 'Cache invalidated on booking create/update; fallback remains intact.'
+  maintainability:
+    status: PASS
+    notes: 'Helpersรวม cache logic ไว้ส่วนกลาง พร้อมสคริปต์ smoke test และ README guidance.'
+
+recommendations:
+  immediate: []
+  future:
+    - action: 'พิจารณาติดตั้งการล้าง cache อัตโนมัติหรือ cron หากไฟล์สะสมใน production'
+      refs:
+        - cache/
+      suggested_owner: dev
