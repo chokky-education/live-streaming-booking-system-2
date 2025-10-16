@@ -33,7 +33,8 @@ try {
                 'name' => $package->name,
                 'description' => $package->description,
                 'price' => $package->price,
-                'equipment_list' => $package->equipment_list
+                'equipment_list' => $package->equipment_list,
+                'max_concurrent_reservations' => $package->max_concurrent_reservations
             ];
         }
     }
@@ -49,12 +50,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['create_booking'])) {
         $error_message = 'Invalid CSRF token';
     } else {
         $booking_data = [
-            'package_id' => (int)$_POST['package_id'],
-            'booking_date' => $_POST['booking_date'],
-            'start_time' => $_POST['start_time'],
-            'end_time' => $_POST['end_time'],
-            'location' => sanitize_input($_POST['location']),
-            'notes' => sanitize_input($_POST['notes'])
+            'package_id'   => (int)$_POST['package_id'],
+            'pickup_date'  => $_POST['pickup_date'] ?? null,
+            'return_date'  => $_POST['return_date'] ?? null,
+            'pickup_time'  => $_POST['pickup_time'] ?? BOOKING_DEFAULT_PICKUP_TIME,
+            'return_time'  => $_POST['return_time'] ?? BOOKING_DEFAULT_RETURN_TIME,
+            'location'     => sanitize_input($_POST['location']),
+            'notes'        => sanitize_input($_POST['notes'])
         ];
         
         try {
@@ -65,22 +67,42 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['create_booking'])) {
                 $error_message = implode('<br>', $validation_errors);
             } else {
                 // ตรวจสอบความพร้อมของแพ็คเกจ
-                if (!$booking->checkPackageAvailability($booking_data['package_id'], $booking_data['booking_date'])) {
-                    $error_message = 'แพ็คเกจนี้ไม่ว่างในวันที่เลือก กรุณาเลือกวันอื่น';
+                $is_available = $booking->checkPackageAvailability(
+                    $booking_data['package_id'],
+                    $booking_data['pickup_date'],
+                    $booking_data['return_date']
+                );
+
+                if (!$is_available) {
+                    $booking->logCapacityWarning(
+                        $booking_data['package_id'],
+                        $booking_data['pickup_date'],
+                        $booking_data['return_date'],
+                        $_SESSION['user_id'] ?? null
+                    );
+                    $error_message = 'แพ็คเกจนี้ไม่ว่างในช่วงวันที่เลือก กรุณาเลือกช่วงอื่น';
                 } else {
                     // คำนวณราคา
                     $package->getById($booking_data['package_id']);
-                    $price_calculation = $package->calculateTotalPrice(1);
+                    $pricing_breakdown = $booking->calculatePricingBreakdown(
+                        $package->price,
+                        $booking_data['pickup_date'],
+                        $booking_data['return_date']
+                    );
+                    $subtotal = $pricing_breakdown['subtotal'];
+                    $vat_amount = $subtotal * VAT_RATE;
+                    $total_price = $subtotal + $vat_amount;
                     
                     // สร้างการจอง
                     $booking->user_id = $_SESSION['user_id'];
                     $booking->package_id = $booking_data['package_id'];
-                    $booking->booking_date = $booking_data['booking_date'];
-                    $booking->start_time = $booking_data['start_time'];
-                    $booking->end_time = $booking_data['end_time'];
+                    $booking->pickup_date = $booking_data['pickup_date'];
+                    $booking->return_date = $booking_data['return_date'];
+                    $booking->pickup_time = $booking_data['pickup_time'];
+                    $booking->return_time = $booking_data['return_time'];
                     $booking->location = $booking_data['location'];
                     $booking->notes = $booking_data['notes'];
-                    $booking->total_price = $price_calculation['total_price'];
+                    $booking->total_price = $total_price;
                     $booking->status = 'pending';
                     
                     if ($booking->create()) {
@@ -90,7 +112,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['create_booking'])) {
                         // Redirect ไปหน้าชำระเงิน
                         header("refresh:2;url=payment.php?booking=" . $booking->booking_code);
                     } else {
-                        $error_message = 'เกิดข้อผิดพลาดในการจอง กรุณาลองใหม่อีกครั้ง';
+                        if ($booking->error_code === 'capacity_conflict') {
+                            $error_message = 'แพ็คเกจนี้ไม่ว่างในช่วงวันที่เลือก กรุณาเลือกช่วงอื่น';
+                        } else {
+                            $error_message = 'เกิดข้อผิดพลาดในการจอง กรุณาลองใหม่อีกครั้ง';
+                        }
                     }
                 }
             }
@@ -100,6 +126,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['create_booking'])) {
         }
     }
 }
+
+$recent_request = $_POST ?? [];
+$quote_preview = $pricing_breakdown ?? null;
 ?>
 
 <!DOCTYPE html>
@@ -321,7 +350,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['create_booking'])) {
                                 <div class="package-card <?php echo ($selected_package_id == $pkg['id']) ? 'selected' : ''; ?>" 
                                      data-package-id="<?php echo $pkg['id']; ?>"
                                      data-package-name="<?php echo htmlspecialchars($pkg['name']); ?>"
-                                     data-package-price="<?php echo $pkg['price']; ?>">
+                                     data-package-price="<?php echo $pkg['price']; ?>"
+                                     data-package-capacity="<?php echo (int)($pkg['max_concurrent_reservations'] ?? 1); ?>">
                                     <div class="package-header">
                                         <h5 class="mb-1"><?php echo htmlspecialchars($pkg['name']); ?></h5>
                                         <div class="package-price"><?php echo format_currency($pkg['price']); ?></div>
@@ -329,6 +359,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['create_booking'])) {
                                     </div>
                                     <div class="p-3">
                                         <p class="text-muted mb-3"><?php echo htmlspecialchars($pkg['description']); ?></p>
+                                        <p class="small text-secondary mb-3">รองรับการจองพร้อมกันสูงสุด <?php echo (int)($pkg['max_concurrent_reservations'] ?? 1); ?> คิว/วัน</p>
                                         <ul class="equipment-list">
                                             <?php 
                                             $equipment = json_decode($pkg['equipment_list'], true);
@@ -353,32 +384,51 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['create_booking'])) {
                         
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label for="booking_date" class="form-label">วันที่ต้องการใช้งาน <span class="text-danger">*</span></label>
-                                <input type="date" class="form-control" id="booking_date" name="booking_date" 
-                                       min="<?php echo date('Y-m-d', strtotime('+1 day')); ?>" required>
+                                <label for="pickup_date" class="form-label">วันที่รับอุปกรณ์ <span class="text-danger">*</span></label>
+                                <input type="date" class="form-control" id="pickup_date" name="pickup_date"
+                                       value="<?php echo htmlspecialchars($recent_request['pickup_date'] ?? ''); ?>"
+                                       min="<?php echo date('Y-m-d'); ?>" required>
                             </div>
-                            
-                            <div class="col-md-3 mb-3">
-                                <label for="start_time" class="form-label">เวลาเริ่ม</label>
-                                <input type="time" class="form-control" id="start_time" name="start_time">
+
+                            <div class="col-md-6 mb-3">
+                                <label for="return_date" class="form-label">วันที่คืนอุปกรณ์ <span class="text-danger">*</span></label>
+                                <input type="date" class="form-control" id="return_date" name="return_date"
+                                       value="<?php echo htmlspecialchars($recent_request['return_date'] ?? ''); ?>"
+                                       min="<?php echo htmlspecialchars($recent_request['pickup_date'] ?? date('Y-m-d')); ?>" required>
                             </div>
-                            
+                        </div>
+
+                        <div class="row">
                             <div class="col-md-3 mb-3">
-                                <label for="end_time" class="form-label">เวลาสิ้นสุด</label>
-                                <input type="time" class="form-control" id="end_time" name="end_time">
+                                <label for="pickup_time" class="form-label">เวลารับ</label>
+                                <input type="time" class="form-control" id="pickup_time" name="pickup_time"
+                                       value="<?php echo htmlspecialchars($recent_request['pickup_time'] ?? BOOKING_DEFAULT_PICKUP_TIME); ?>">
+                            </div>
+
+                            <div class="col-md-3 mb-3">
+                                <label for="return_time" class="form-label">เวลาคืน</label>
+                                <input type="time" class="form-control" id="return_time" name="return_time"
+                                       value="<?php echo htmlspecialchars($recent_request['return_time'] ?? BOOKING_DEFAULT_RETURN_TIME); ?>">
+                            </div>
+
+                            <div class="col-md-6 mb-3 d-flex align-items-end">
+                                <div class="w-100">
+                                    <label class="form-label">สถานะความพร้อม</label>
+                                    <div id="availabilityNotice" class="alert alert-info mb-0" role="alert" style="display: none;"></div>
+                                </div>
                             </div>
                         </div>
                         
                         <div class="mb-3">
                             <label for="location" class="form-label">สถานที่ใช้งาน <span class="text-danger">*</span></label>
                             <textarea class="form-control" id="location" name="location" rows="3" 
-                                      placeholder="กรุณาระบุสถานที่ที่จะใช้งานอุปกรณ์" required></textarea>
+                                      placeholder="กรุณาระบุสถานที่ที่จะใช้งานอุปกรณ์" required><?php echo isset($recent_request['location']) ? htmlspecialchars($recent_request['location']) : ''; ?></textarea>
                         </div>
                         
                         <div class="mb-3">
                             <label for="notes" class="form-label">หมายเหตุเพิ่มเติม</label>
                             <textarea class="form-control" id="notes" name="notes" rows="3" 
-                                      placeholder="ข้อมูลเพิ่มเติมหรือความต้องการพิเศษ (ไม่บังคับ)"></textarea>
+                                      placeholder="ข้อมูลเพิ่มเติมหรือความต้องการพิเศษ (ไม่บังคับ)"><?php echo isset($recent_request['notes']) ? htmlspecialchars($recent_request['notes']) : ''; ?></textarea>
                         </div>
                         
                         <div class="d-grid">
@@ -400,25 +450,40 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['create_booking'])) {
                         <div class="mb-3">
                             <strong>แพ็คเกจที่เลือก:</strong>
                             <div id="selectedPackageName"><?php echo $selected_package ? htmlspecialchars($selected_package['name']) : ''; ?></div>
+                            <div class="small text-secondary" id="selectedPackageCapacity">
+                                <?php if ($selected_package) : ?>
+                                    รองรับการจองพร้อมกันสูงสุด <?php echo (int)($selected_package['max_concurrent_reservations'] ?? 1); ?> คิวต่อวัน
+                                <?php endif; ?>
+                            </div>
                         </div>
                         
                         <div class="price-summary">
                             <div class="d-flex justify-content-between mb-2">
-                                <span>ราคาแพ็คเกจ:</span>
-                                <span id="packagePrice"><?php echo $selected_package ? format_currency($selected_package['price']) : ''; ?></span>
+                                <span>ราคาแพ็คเกจ (วันแรก):</span>
+                                <span id="summaryBaseDay">-</span>
                             </div>
                             <div class="d-flex justify-content-between mb-2">
-                                <span>จำนวนวัน:</span>
-                                <span>1 วัน</span>
+                                <span>จำนวนวันเช่า:</span>
+                                <span id="summaryRentalDays">-</span>
+                            </div>
+                            <div class="mb-2 small text-muted">
+                                <div class="d-flex justify-content-between"><span>บวกวันที 2 (+40%)</span><span id="summaryDay2">-</span></div>
+                                <div class="d-flex justify-content-between"><span>วันที 3-6 (+20%/วัน)</span><span id="summaryDay3to6">-</span></div>
+                                <div class="d-flex justify-content-between"><span>วันที 7+ (+10%/วัน)</span><span id="summaryDay7plus">-</span></div>
+                                <div class="d-flex justify-content-between"><span>เสาร์-อาทิตย์/วันหยุด (+10%/วัน)</span><span id="summaryWeekend">-</span></div>
                             </div>
                             <div class="d-flex justify-content-between mb-2">
-                                <span>VAT (7%):</span>
-                                <span id="vatAmount"><?php echo $selected_package ? format_currency($selected_package['price'] * 0.07) : ''; ?></span>
+                                <span>ราคารวมก่อน VAT:</span>
+                                <span id="summarySubtotal">-</span>
+                            </div>
+                            <div class="d-flex justify-content-between mb-2">
+                                <span>VAT (<?php echo number_format(VAT_RATE * 100, 0); ?>%):</span>
+                                <span id="summaryVat">-</span>
                             </div>
                             <hr>
                             <div class="d-flex justify-content-between">
-                                <strong>ราคารวม:</strong>
-                                <strong id="totalPrice"><?php echo $selected_package ? format_currency($selected_package['price'] * 1.07) : ''; ?></strong>
+                                <strong>ราคารวมสุทธิ:</strong>
+                                <strong id="summaryTotal">-</strong>
                             </div>
                         </div>
                         
@@ -464,92 +529,313 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['create_booking'])) {
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     
     <script>
-        // Package selection
-        document.querySelectorAll('.package-card').forEach(card => {
-            card.addEventListener('click', function() {
-                // Remove selected class from all cards
-                document.querySelectorAll('.package-card').forEach(c => c.classList.remove('selected'));
-                
-                // Add selected class to clicked card
-                this.classList.add('selected');
-                
-                // Update form and summary
-                const packageId = this.dataset.packageId;
-                const packageName = this.dataset.packageName;
-                const packagePrice = parseFloat(this.dataset.packagePrice);
-                
-                document.getElementById('selectedPackageId').value = packageId;
-                document.getElementById('selectedPackageName').textContent = packageName;
-                document.getElementById('packagePrice').textContent = formatCurrency(packagePrice);
-                
-                const vatAmount = packagePrice * 0.07;
-                const totalPrice = packagePrice + vatAmount;
-                
-                document.getElementById('vatAmount').textContent = formatCurrency(vatAmount);
-                document.getElementById('totalPrice').textContent = formatCurrency(totalPrice);
-                
-                // Show form and summary
-                document.getElementById('bookingForm').style.display = 'block';
-                document.getElementById('bookingSummary').style.display = 'block';
-                document.getElementById('noPackageSelected').style.display = 'none';
+        const HOLIDAYS = new Set(<?php echo json_encode(get_configured_holidays()); ?>);
+        const VAT_RATE = <?php echo (float)VAT_RATE; ?>;
+        const PRICING_RULES = {
+            day2: <?php echo (float)BOOKING_SURCHARGE_DAY2; ?>,
+            day3to6: <?php echo (float)BOOKING_SURCHARGE_DAY3_TO6; ?>,
+            day7plus: <?php echo (float)BOOKING_SURCHARGE_DAY7_PLUS; ?>,
+            weekend: <?php echo (float)BOOKING_WEEKEND_HOLIDAY_SURCHARGE; ?>
+        };
+
+        const DEFAULT_PICKUP_TIME = '<?php echo BOOKING_DEFAULT_PICKUP_TIME; ?>';
+        const DEFAULT_RETURN_TIME = '<?php echo BOOKING_DEFAULT_RETURN_TIME; ?>';
+
+        const packageCards = document.querySelectorAll('.package-card');
+        const bookingForm = document.getElementById('bookingForm');
+        const bookingSummary = document.getElementById('bookingSummary');
+        const noPackageSelected = document.getElementById('noPackageSelected');
+        const availabilityNotice = document.getElementById('availabilityNotice');
+        const capacityField = document.getElementById('selectedPackageCapacity');
+
+        const pickupDateInput = document.getElementById('pickup_date');
+        const returnDateInput = document.getElementById('return_date');
+        const pickupTimeInput = document.getElementById('pickup_time');
+        const returnTimeInput = document.getElementById('return_time');
+
+        const summaryFields = {
+            baseDay: document.getElementById('summaryBaseDay'),
+            rentalDays: document.getElementById('summaryRentalDays'),
+            day2: document.getElementById('summaryDay2'),
+            day3to6: document.getElementById('summaryDay3to6'),
+            day7plus: document.getElementById('summaryDay7plus'),
+            weekend: document.getElementById('summaryWeekend'),
+            subtotal: document.getElementById('summarySubtotal'),
+            vat: document.getElementById('summaryVat'),
+            total: document.getElementById('summaryTotal'),
+        };
+
+        let selectedPackage = {
+            id: document.getElementById('selectedPackageId').value || null,
+            name: document.getElementById('selectedPackageName').textContent,
+            price: null,
+            capacity: null
+        };
+
+        packageCards.forEach(card => {
+            card.addEventListener('click', () => {
+                packageCards.forEach(c => c.classList.remove('selected'));
+                card.classList.add('selected');
+
+                selectedPackage = {
+                    id: card.dataset.packageId,
+                    name: card.dataset.packageName,
+                    price: parseFloat(card.dataset.packagePrice),
+                    capacity: parseInt(card.dataset.packageCapacity, 10) || 1
+                };
+
+                document.getElementById('selectedPackageId').value = selectedPackage.id;
+                document.getElementById('selectedPackageName').textContent = selectedPackage.name;
+                if (capacityField) {
+                    capacityField.textContent = `รองรับการจองพร้อมกันสูงสุด ${selectedPackage.capacity} คิวต่อวัน`;
+                }
+
+                bookingForm.style.display = 'block';
+                bookingSummary.style.display = 'block';
+                noPackageSelected.style.display = 'none';
+
+                updateSummary();
             });
         });
-        
-        // Format currency function
+
+        [pickupDateInput, returnDateInput, pickupTimeInput, returnTimeInput].forEach(input => {
+            if (!input) return;
+            input.addEventListener('change', () => {
+                if (input === pickupDateInput && returnDateInput.value) {
+                    if (returnDateInput.value < pickupDateInput.value) {
+                        returnDateInput.value = pickupDateInput.value;
+                    }
+                    returnDateInput.min = pickupDateInput.value || '<?php echo date('Y-m-d'); ?>';
+                }
+                updateSummary();
+            });
+        });
+
         function formatCurrency(amount) {
-            return new Intl.NumberFormat('th-TH', {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2
-            }).format(amount) + ' บาท';
+            if (amount === null || isNaN(amount)) {
+                return '-';
+            }
+            return new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount) + ' บาท';
         }
-        
-        // Date validation
-        document.getElementById('booking_date').addEventListener('change', function() {
-            const selectedDate = new Date(this.value);
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            
-            if (selectedDate <= today) {
-                alert('กรุณาเลือกวันที่ในอนาคต');
-                this.value = '';
+
+        function calculatePricing(basePrice, pickupDate, returnDate) {
+            if (!basePrice || !pickupDate || !returnDate) {
+                return null;
             }
-        });
-        
-        // Time validation
-        document.getElementById('end_time').addEventListener('change', function() {
-            const startTime = document.getElementById('start_time').value;
-            const endTime = this.value;
-            
-            if (startTime && endTime && startTime >= endTime) {
-                alert('เวลาสิ้นสุดต้องมากกว่าเวลาเริ่ม');
-                this.value = '';
+            const start = new Date(pickupDate);
+            const end = new Date(returnDate);
+            if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) {
+                return null;
             }
-        });
-        
-        // Form validation
-        document.getElementById('bookingForm').addEventListener('submit', function(e) {
+
+            const msPerDay = 86400000;
+            const rentalDays = Math.floor((end - start) / msPerDay) + 1;
+            const baseDay = basePrice;
+            const day2 = rentalDays >= 2 ? basePrice * PRICING_RULES.day2 : 0;
+            const day3to6Count = Math.max(0, Math.min(rentalDays, 6) - 2);
+            const day3to6 = day3to6Count * basePrice * PRICING_RULES.day3to6;
+            const day7plusCount = Math.max(0, rentalDays - 6);
+            const day7plus = day7plusCount * basePrice * PRICING_RULES.day7plus;
+
+            let weekend = 0;
+            for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+                const iso = d.toISOString().slice(0, 10);
+                const day = d.getDay();
+                if (day === 0 || day === 6 || HOLIDAYS.has(iso)) {
+                    weekend += basePrice * PRICING_RULES.weekend;
+                }
+            }
+
+            const subtotal = baseDay + day2 + day3to6 + day7plus + weekend;
+            const vat = subtotal * VAT_RATE;
+            const total = subtotal + vat;
+
+            return { rentalDays, baseDay, day2, day3to6, day7plus, weekend, subtotal, vat, total };
+        }
+
+        let availabilityTimeout = null;
+
+        function updateSummary() {
+            const pickupDate = pickupDateInput.value;
+            const returnDate = returnDateInput.value;
+            const basePrice = selectedPackage.price || (selectedPackage.id ? parseFloat(getPackagePrice(selectedPackage.id)) : null);
+
+            const pricing = calculatePricing(basePrice, pickupDate, returnDate);
+
+            if (!pricing) {
+                setSummaryPlaceholders();
+            } else {
+                summaryFields.baseDay.textContent = formatCurrency(pricing.baseDay);
+                summaryFields.rentalDays.textContent = `${pricing.rentalDays} วัน`;
+                summaryFields.day2.textContent = formatCurrency(pricing.day2);
+                summaryFields.day3to6.textContent = formatCurrency(pricing.day3to6);
+                summaryFields.day7plus.textContent = formatCurrency(pricing.day7plus);
+                summaryFields.weekend.textContent = formatCurrency(pricing.weekend);
+                summaryFields.subtotal.textContent = formatCurrency(pricing.subtotal);
+                summaryFields.vat.textContent = formatCurrency(pricing.vat);
+                summaryFields.total.textContent = formatCurrency(pricing.total);
+            }
+
+            if (selectedPackage.id) {
+                if (availabilityTimeout) {
+                    clearTimeout(availabilityTimeout);
+                }
+                availabilityTimeout = setTimeout(() => {
+                    fetchAvailability(selectedPackage.id, pickupDate || null, returnDate || null);
+                }, 250);
+            } else {
+                availabilityNotice.style.display = 'none';
+            }
+        }
+
+        function setSummaryPlaceholders() {
+            Object.values(summaryFields).forEach(field => {
+                field.textContent = '-';
+            });
+        }
+
+        function getPackagePrice(packageId) {
+            const card = document.querySelector(`.package-card[data-package-id="${packageId}"]`);
+            return card ? card.dataset.packagePrice : null;
+        }
+
+        async function fetchAvailability(packageId, start, end) {
+            if (!availabilityNotice) {
+                return;
+            }
+
+            availabilityNotice.style.display = 'block';
+            availabilityNotice.classList.remove('alert-danger', 'alert-info');
+            availabilityNotice.classList.add('alert-info');
+            availabilityNotice.textContent = 'กำลังตรวจสอบสถานะความพร้อม...';
+
+            try {
+                const params = new URLSearchParams({ package_id: packageId });
+                const hasRange = Boolean(start) && Boolean(end);
+                if (start) params.append('start', start);
+                if (end) params.append('end', end);
+
+                const response = await fetch(`api/availability.php?${params.toString()}`);
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+
+                const payload = await response.json();
+                if (!payload.success) {
+                    throw new Error(payload.error?.message || 'Failed to load availability');
+                }
+
+                const windowStart = payload.data.window?.start;
+                const windowEnd = payload.data.window?.end;
+                const capacity = payload.data.capacity ?? 1;
+                const usage = payload.data.usage ?? {};
+                const usageEntries = Object.entries(usage).sort(([a], [b]) => a.localeCompare(b));
+                const fullyBookedDates = usageEntries
+                    .filter(([, count]) => count >= capacity)
+                    .map(([date]) => date);
+                const partiallyBookedDates = usageEntries
+                    .filter(([, count]) => count < capacity)
+                    .map(([date, count]) => `${date} (จองแล้ว ${count}/${capacity})`);
+
+                if (fullyBookedDates.length > 0) {
+                    const details = fullyBookedDates
+                        .map(date => `${date} (เต็ม ${capacity}/${capacity})`)
+                        .join(', ');
+                    availabilityNotice.textContent = hasRange
+                        ? `วันดังกล่าวเต็มแล้ว: ${details}`
+                        : `ช่วง ${windowStart} ถึง ${windowEnd} มีวันที่เต็มแล้ว: ${details}`;
+                    availabilityNotice.classList.remove('alert-info');
+                    availabilityNotice.classList.add('alert-danger');
+                } else if (partiallyBookedDates.length > 0) {
+                    const details = partiallyBookedDates.join(', ');
+                    availabilityNotice.textContent = hasRange
+                        ? `ยังเหลือคิวว่าง (รองรับสูงสุด ${capacity} ต่อวัน) — วันที่จองแล้ว: ${details}`
+                        : `ในช่วง ${windowStart} ถึง ${windowEnd} มีการจองแล้วบางส่วน: ${details}`;
+                    availabilityNotice.classList.remove('alert-danger');
+                    availabilityNotice.classList.add('alert-info');
+                } else {
+                    availabilityNotice.textContent = hasRange
+                        ? `ช่วงวันที่ที่เลือกพร้อมให้บริการ (รองรับสูงสุด ${capacity} คิวต่อวัน)`
+                        : `ยังไม่มีการจองในช่วง ${windowStart} ถึง ${windowEnd} (รองรับ ${capacity} คิวต่อวัน)`;
+                    availabilityNotice.classList.remove('alert-danger');
+                    availabilityNotice.classList.add('alert-info');
+                }
+            } catch (error) {
+                logConsoleError(error);
+                availabilityNotice.textContent = 'ไม่สามารถตรวจสอบความพร้อมได้ กรุณาลองใหม่';
+                availabilityNotice.classList.remove('alert-info');
+                availabilityNotice.classList.add('alert-danger');
+            }
+        }
+
+        function logConsoleError(error) {
+            if (window.console && console.error) {
+                console.error(error);
+            }
+        }
+
+        bookingForm.addEventListener('submit', event => {
             const packageId = document.getElementById('selectedPackageId').value;
-            const bookingDate = document.getElementById('booking_date').value;
+            const pickupDate = pickupDateInput.value;
+            const returnDate = returnDateInput.value;
+            const pickupTime = pickupTimeInput.value || DEFAULT_PICKUP_TIME;
+            const returnTime = returnTimeInput.value || DEFAULT_RETURN_TIME;
             const location = document.getElementById('location').value.trim();
-            
+
             if (!packageId) {
-                e.preventDefault();
+                event.preventDefault();
                 alert('กรุณาเลือกแพ็คเกจ');
                 return;
             }
-            
-            if (!bookingDate) {
-                e.preventDefault();
-                alert('กรุณาเลือกวันที่จอง');
+
+            if (!pickupDate || !returnDate) {
+                event.preventDefault();
+                alert('กรุณาเลือกช่วงวันที่รับและคืนอุปกรณ์');
                 return;
             }
-            
+
+            if (returnDate < pickupDate) {
+                event.preventDefault();
+                alert('วันที่คืนต้องไม่ก่อนวันที่รับ');
+                return;
+            }
+
             if (!location) {
-                e.preventDefault();
+                event.preventDefault();
                 alert('กรุณาระบุสถานที่ใช้งาน');
                 return;
             }
+
+            if (pickupDate === returnDate && pickupTime && returnTime && pickupTime >= returnTime) {
+                event.preventDefault();
+                alert('เวลาคืนต้องมากกว่าเวลารับในวันเดียวกัน');
+                return;
+            }
         });
+
+        // Initialise summary if page loaded with existing selection
+        if (selectedPackage.id) {
+            const card = document.querySelector(`.package-card[data-package-id="${selectedPackage.id}"]`);
+            if (card) {
+                selectedPackage.price = parseFloat(card.dataset.packagePrice);
+                selectedPackage.capacity = parseInt(card.dataset.packageCapacity, 10) || 1;
+                card.classList.add('selected');
+                bookingForm.style.display = 'block';
+                bookingSummary.style.display = 'block';
+                noPackageSelected.style.display = 'none';
+                if (capacityField) {
+                    capacityField.textContent = `รองรับการจองพร้อมกันสูงสุด ${selectedPackage.capacity} คิวต่อวัน`;
+                }
+                updateSummary();
+            }
+        }
+
+        // Default times if empty
+        if (!pickupTimeInput.value) pickupTimeInput.value = DEFAULT_PICKUP_TIME;
+        if (!returnTimeInput.value) returnTimeInput.value = DEFAULT_RETURN_TIME;
+        if (pickupDateInput.value) {
+            returnDateInput.min = pickupDateInput.value;
+        }
     </script>
 </body>
 </html>

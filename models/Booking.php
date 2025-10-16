@@ -1,61 +1,122 @@
 <?php
 /**
  * Booking Model
- * ระบบจองอุปกรณ์ Live Streaming
+ * รองรับการจองแบบหลายวันพร้อมระบบ ledger ความพร้อมใช้งาน
  */
+
+class CapacityConflictException extends Exception {}
 
 class Booking {
     private $conn;
     private $table_name = "bookings";
+    private $packageCapacityCache = [];
 
     public $id;
     public $booking_code;
     public $user_id;
     public $package_id;
-    public $booking_date;
-    public $start_time;
-    public $end_time;
+    public $pickup_date;
+    public $return_date;
+    public $pickup_time;
+    public $return_time;
+    public $rental_days;
     public $location;
     public $notes;
     public $total_price;
     public $status;
     public $created_at;
+    public $error_code;
 
     public function __construct($db) {
         $this->conn = $db;
     }
 
     /**
-     * สร้างการจองใหม่
+     * สร้างการจองใหม่ (พร้อมบันทึก ledger)
      */
     public function create() {
-        $query = "INSERT INTO " . $this->table_name . " 
-                  SET booking_code=:booking_code, user_id=:user_id, package_id=:package_id, 
-                      booking_date=:booking_date, start_time=:start_time, end_time=:end_time,
-                      location=:location, notes=:notes, total_price=:total_price, status=:status";
+        $this->error_code = null;
+        try {
+            $this->conn->beginTransaction();
 
-        $stmt = $this->conn->prepare($query);
+            // Lock package row to prevent concurrent overbooking
+            $lockStmt = $this->conn->prepare('SELECT id FROM packages WHERE id = :package_id FOR UPDATE');
+            $lockStmt->bindParam(':package_id', $this->package_id, PDO::PARAM_INT);
+            $lockStmt->execute();
+            if ($lockStmt->rowCount() === 0) {
+                throw new Exception('Package not found while locking');
+            }
 
-        // Generate unique booking code
-        $this->booking_code = $this->generateBookingCode();
+            if (!$this->checkPackageAvailability(
+                $this->package_id,
+                $this->pickup_date,
+                $this->return_date,
+                null,
+                true
+            )) {
+                $this->error_code = 'capacity_conflict';
+                $usage = $this->getReservationUsageMap(
+                    $this->package_id,
+                    $this->pickup_date,
+                    $this->return_date,
+                    null,
+                    true
+                );
+                $capacity = $this->getPackageCapacity($this->package_id);
+                $this->logCapacityWarning(
+                    $this->package_id,
+                    $this->pickup_date,
+                    $this->return_date,
+                    $this->user_id,
+                    $usage,
+                    $capacity
+                );
+                throw new CapacityConflictException('Capacity exceeded during booking create');
+            }
 
-        $stmt->bindParam(":booking_code", $this->booking_code);
-        $stmt->bindParam(":user_id", $this->user_id);
-        $stmt->bindParam(":package_id", $this->package_id);
-        $stmt->bindParam(":booking_date", $this->booking_date);
-        $stmt->bindParam(":start_time", $this->start_time);
-        $stmt->bindParam(":end_time", $this->end_time);
-        $stmt->bindParam(":location", $this->location);
-        $stmt->bindParam(":notes", $this->notes);
-        $stmt->bindParam(":total_price", $this->total_price);
-        $stmt->bindParam(":status", $this->status);
+            $query = "INSERT INTO " . $this->table_name . " 
+                      SET booking_code=:booking_code, user_id=:user_id, package_id=:package_id,
+                          pickup_date=:pickup_date, return_date=:return_date,
+                          pickup_time=:pickup_time, return_time=:return_time,
+                          location=:location, notes=:notes, total_price=:total_price, status=:status";
 
-        if($stmt->execute()) {
-            $this->id = $this->conn->lastInsertId();
+            $stmt = $this->conn->prepare($query);
+
+            $this->booking_code = $this->generateBookingCode();
+            $this->pickup_time = $this->pickup_time ?: BOOKING_DEFAULT_PICKUP_TIME;
+            $this->return_time = $this->return_time ?: BOOKING_DEFAULT_RETURN_TIME;
+            $this->status = $this->status ?: 'pending';
+
+            $stmt->bindParam(":booking_code", $this->booking_code);
+            $stmt->bindParam(":user_id", $this->user_id, PDO::PARAM_INT);
+            $stmt->bindParam(":package_id", $this->package_id, PDO::PARAM_INT);
+            $stmt->bindParam(":pickup_date", $this->pickup_date);
+            $stmt->bindParam(":return_date", $this->return_date);
+            $stmt->bindParam(":pickup_time", $this->pickup_time);
+            $stmt->bindParam(":return_time", $this->return_time);
+            $stmt->bindParam(":location", $this->location);
+            $stmt->bindParam(":notes", $this->notes);
+            $stmt->bindParam(":total_price", $this->total_price);
+            $stmt->bindParam(":status", $this->status);
+
+            if (!$stmt->execute()) {
+                throw new Exception('Failed to insert booking');
+            }
+
+            $this->id = (int)$this->conn->lastInsertId();
+
+            $this->seedAvailabilityLedger();
+
+            $this->conn->commit();
             return true;
+        } catch (CapacityConflictException $conflict) {
+            $this->conn->rollBack();
+            return false;
+        } catch (Throwable $e) {
+            $this->conn->rollBack();
+            log_event('Booking create failed: ' . $e->getMessage(), 'ERROR');
+            return false;
         }
-
-        return false;
     }
 
     /**
@@ -71,25 +132,13 @@ class Booking {
                   LIMIT 1";
 
         $stmt = $this->conn->prepare($query);
-        $stmt->bindParam(":id", $id);
+        $stmt->bindParam(":id", $id, PDO::PARAM_INT);
         $stmt->execute();
 
-        if($stmt->rowCount() > 0) {
+        if ($stmt->rowCount() > 0) {
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
-            
-            $this->id = $row['id'];
-            $this->booking_code = $row['booking_code'];
-            $this->user_id = $row['user_id'];
-            $this->package_id = $row['package_id'];
-            $this->booking_date = $row['booking_date'];
-            $this->start_time = $row['start_time'];
-            $this->end_time = $row['end_time'];
-            $this->location = $row['location'];
-            $this->notes = $row['notes'];
-            $this->total_price = $row['total_price'];
-            $this->status = $row['status'];
-            $this->created_at = $row['created_at'];
-            
+
+            $this->hydrateFromRow($row);
             return $row;
         }
 
@@ -112,8 +161,10 @@ class Booking {
         $stmt->bindParam(":booking_code", $booking_code);
         $stmt->execute();
 
-        if($stmt->rowCount() > 0) {
-            return $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($stmt->rowCount() > 0) {
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            $this->hydrateFromRow($row);
+            return $row;
         }
 
         return false;
@@ -131,7 +182,7 @@ class Booking {
                   LIMIT :limit OFFSET :offset";
 
         $stmt = $this->conn->prepare($query);
-        $stmt->bindParam(":user_id", $user_id);
+        $stmt->bindParam(":user_id", $user_id, PDO::PARAM_INT);
         $stmt->bindParam(":limit", $limit, PDO::PARAM_INT);
         $stmt->bindParam(":offset", $offset, PDO::PARAM_INT);
         $stmt->execute();
@@ -158,11 +209,11 @@ class Booking {
                   LIMIT :limit OFFSET :offset";
 
         $stmt = $this->conn->prepare($query);
-        
+
         if ($status) {
             $stmt->bindParam(":status", $status);
         }
-        
+
         $stmt->bindParam(":limit", $limit, PDO::PARAM_INT);
         $stmt->bindParam(":offset", $offset, PDO::PARAM_INT);
         $stmt->execute();
@@ -171,7 +222,7 @@ class Booking {
     }
 
     /**
-     * อัปเดตสถานะการจอง
+     * อัปเดตสถานะการจอง พร้อมจัดการ ledger
      */
     public function updateStatus($status) {
         $query = "UPDATE " . $this->table_name . " 
@@ -180,26 +231,23 @@ class Booking {
 
         $stmt = $this->conn->prepare($query);
         $stmt->bindParam(":status", $status);
-        $stmt->bindParam(":id", $this->id);
+        $stmt->bindParam(":id", $this->id, PDO::PARAM_INT);
 
-        if($stmt->execute()) {
+        if ($stmt->execute()) {
             $this->status = $status;
+            if (in_array($status, ['cancelled', 'completed'], true)) {
+                $this->deleteAvailabilityLedger();
+            }
             return true;
         }
 
         return false;
     }
 
-    /**
-     * ยกเลิกการจอง
-     */
     public function cancel() {
         return $this->updateStatus('cancelled');
     }
 
-    /**
-     * ยืนยันการจอง
-     */
     public function confirm() {
         return $this->updateStatus('confirmed');
     }
@@ -209,14 +257,13 @@ class Booking {
      */
     private function generateBookingCode() {
         do {
-            $code = 'BK' . date('Ymd') . strtoupper(substr(uniqid(), -6));
-            
-            // ตรวจสอบว่ารหัสซ้ำหรือไม่
+            $code = 'BK' . date('Ymd') . strtoupper(substr(uniqid('', true), -6));
+
             $query = "SELECT id FROM " . $this->table_name . " WHERE booking_code = :code LIMIT 1";
             $stmt = $this->conn->prepare($query);
             $stmt->bindParam(":code", $code);
             $stmt->execute();
-            
+
         } while ($stmt->rowCount() > 0);
 
         return $code;
@@ -228,32 +275,56 @@ class Booking {
     public function validate($data) {
         $errors = [];
 
-        // ตรวจสอบแพ็คเกจ
-        if(empty($data['package_id'])) {
+        $package_id = $data['package_id'] ?? null;
+        $pickup_date = $data['pickup_date'] ?? null;
+        $return_date = $data['return_date'] ?? null;
+        $pickup_time = $data['pickup_time'] ?? BOOKING_DEFAULT_PICKUP_TIME;
+        $return_time = $data['return_time'] ?? BOOKING_DEFAULT_RETURN_TIME;
+        $location = $data['location'] ?? null;
+
+        if (empty($package_id)) {
             $errors[] = "กรุณาเลือกแพ็คเกจ";
         }
 
-        // ตรวจสอบวันที่จอง
-        if(empty($data['booking_date'])) {
-            $errors[] = "กรุณาเลือกวันที่จอง";
-        } else {
-            $booking_date = strtotime($data['booking_date']);
-            $today = strtotime(date('Y-m-d'));
-            
-            if($booking_date < $today) {
-                $errors[] = "ไม่สามารถจองย้อนหลังได้";
+        if (empty($pickup_date)) {
+            $errors[] = "กรุณาเลือกวันรับอุปกรณ์";
+        }
+
+        if (empty($return_date)) {
+            $errors[] = "กรุณาเลือกวันคืนอุปกรณ์";
+        }
+
+        if ($pickup_date && $return_date) {
+            $pickup = DateTime::createFromFormat('Y-m-d', $pickup_date);
+            $return = DateTime::createFromFormat('Y-m-d', $return_date);
+            if (!$pickup || !$return) {
+                $errors[] = "รูปแบบวันที่ไม่ถูกต้อง";
+            } else {
+                $today = new DateTime('today');
+                if ($pickup < $today) {
+                    $errors[] = "ไม่สามารถจองย้อนหลังได้";
+                }
+                if ($return < $pickup) {
+                    $errors[] = "วันคืนต้องไม่น้อยกว่าวันรับ";
+                }
             }
         }
 
-        // ตรวจสอบเวลา
-        if(!empty($data['start_time']) && !empty($data['end_time'])) {
-            if(strtotime($data['start_time']) >= strtotime($data['end_time'])) {
-                $errors[] = "เวลาเริ่มต้องน้อยกว่าเวลาสิ้นสุด";
+        if ($pickup_time && !preg_match('/^\d{2}:\d{2}$/', $pickup_time)) {
+            $errors[] = "รูปแบบเวลาเวลารับไม่ถูกต้อง";
+        }
+
+        if ($return_time && !preg_match('/^\d{2}:\d{2}$/', $return_time)) {
+            $errors[] = "รูปแบบเวลากลับไม่ถูกต้อง";
+        }
+
+        if ($pickup_date === $return_date && $pickup_time && $return_time) {
+            if (strtotime($pickup_time) >= strtotime($return_time)) {
+                $errors[] = "เวลาคืนต้องมากกว่าเวลารับในวันเดียวกัน";
             }
         }
 
-        // ตรวจสอบสถานที่
-        if(empty($data['location'])) {
+        if (empty($location)) {
             $errors[] = "กรุณาระบุสถานที่ใช้งาน";
         }
 
@@ -261,35 +332,56 @@ class Booking {
     }
 
     /**
-     * ดึงสถิติการจอง
+     * คำนวณราคาเช่าตามช่วงเวลาและกติกา
      */
-    public function getBookingStatistics() {
-        $query = "SELECT 
-                    COUNT(*) as total_bookings,
-                    COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_bookings,
-                    COUNT(CASE WHEN status = 'confirmed' THEN 1 END) as confirmed_bookings,
-                    COUNT(CASE WHEN status = 'cancelled' THEN 1 END) as cancelled_bookings,
-                    COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_bookings,
-                    SUM(CASE WHEN status = 'confirmed' THEN total_price ELSE 0 END) as total_revenue,
-                    AVG(CASE WHEN status = 'confirmed' THEN total_price ELSE NULL END) as avg_booking_value
-                  FROM " . $this->table_name;
+    public function calculatePricingBreakdown($package_price, $pickup_date, $return_date) {
+        $pickup = new DateTime($pickup_date);
+        $return = new DateTime($return_date);
+        $days = (int)$pickup->diff($return)->format('%a') + 1;
 
-        $stmt = $this->conn->prepare($query);
-        $stmt->execute();
+        $base = $package_price; // day 1
+        $day2 = $days >= 2 ? $package_price * BOOKING_SURCHARGE_DAY2 : 0;
 
-        return $stmt->fetch(PDO::FETCH_ASSOC);
+        $day3to6_count = max(0, min($days, 6) - 2);
+        $day3to6 = $day3to6_count * $package_price * BOOKING_SURCHARGE_DAY3_TO6;
+
+        $day7plus_count = max(0, $days - 6);
+        $day7plus = $day7plus_count * $package_price * BOOKING_SURCHARGE_DAY7_PLUS;
+
+        $weekend_surcharge = 0;
+        $holidays = array_flip(get_configured_holidays());
+        foreach ($this->generateDateSequence($pickup_date, $return_date) as $day) {
+            $dateObj = new DateTime($day);
+            $isWeekend = in_array((int)$dateObj->format('w'), [0, 6], true);
+            $isHoliday = isset($holidays[$day]);
+            if ($isWeekend || $isHoliday) {
+                $weekend_surcharge += $package_price * BOOKING_WEEKEND_HOLIDAY_SURCHARGE;
+            }
+        }
+
+        $subtotal = $base + $day2 + $day3to6 + $day7plus + $weekend_surcharge;
+
+        return [
+            'rental_days' => $days,
+            'base_day' => $base,
+            'day2_surcharge' => $day2,
+            'day3_6_surcharge' => $day3to6,
+            'day7_plus_surcharge' => $day7plus,
+            'weekend_holiday_surcharge' => $weekend_surcharge,
+            'subtotal' => $subtotal,
+        ];
     }
 
     /**
-     * ดึงการจองตามช่วงวันที่
+     * ดึงการจองตามช่วงวันที่ (ซ้อนทับ)
      */
     public function getBookingsByDateRange($start_date, $end_date) {
         $query = "SELECT b.*, p.name as package_name, u.first_name, u.last_name
                   FROM " . $this->table_name . " b
                   LEFT JOIN packages p ON b.package_id = p.id
                   LEFT JOIN users u ON b.user_id = u.id
-                  WHERE b.booking_date BETWEEN :start_date AND :end_date
-                  ORDER BY b.booking_date ASC, b.created_at ASC";
+                  WHERE NOT (b.return_date < :start_date OR b.pickup_date > :end_date)
+                  ORDER BY b.pickup_date ASC, b.created_at ASC";
 
         $stmt = $this->conn->prepare($query);
         $stmt->bindParam(":start_date", $start_date);
@@ -299,27 +391,321 @@ class Booking {
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    /**
-     * ตรวจสอบความพร้อมของแพ็คเกจในวันที่กำหนด
-     */
-    public function checkPackageAvailability($package_id, $booking_date) {
-        $query = "SELECT COUNT(*) as booking_count 
-                  FROM " . $this->table_name . " 
-                  WHERE package_id = :package_id 
-                  AND booking_date = :booking_date 
-                  AND status IN ('pending', 'confirmed')";
+    public function getBookingStatistics() {
+        $query = "SELECT 
+                        COUNT(*) AS total_bookings,
+                        COUNT(CASE WHEN status = 'pending' THEN 1 END) AS pending_bookings,
+                        COUNT(CASE WHEN status = 'confirmed' THEN 1 END) AS confirmed_bookings,
+                        COUNT(CASE WHEN status = 'cancelled' THEN 1 END) AS cancelled_bookings,
+                        COUNT(CASE WHEN status = 'completed' THEN 1 END) AS completed_bookings,
+                        COALESCE(SUM(CASE WHEN status IN ('confirmed','completed') THEN total_price ELSE 0 END),0) AS total_revenue,
+                        COALESCE(SUM(rental_days),0) AS total_rental_days
+                  FROM " . $this->table_name;
 
         $stmt = $this->conn->prepare($query);
-        $stmt->bindParam(":package_id", $package_id);
-        $stmt->bindParam(":booking_date", $booking_date);
         $stmt->execute();
 
-        $result = $stmt->fetch(PDO::FETCH_ASSOC);
-        
-        // สมมติว่าแต่ละแพ็คเกจมีอุปกรณ์ 1 ชุด
-        $max_bookings = 1;
-        
-        return $result['booking_count'] < $max_bookings;
+        return $stmt->fetch(PDO::FETCH_ASSOC);
     }
+
+    /**
+     * ตรวจสอบความพร้อมของแพ็คเกจ
+     */
+    public function checkPackageAvailability($package_id, $pickup_date, $return_date, $ignore_booking_id = null, $lockRows = false) {
+        $capacity = $this->getPackageCapacity($package_id);
+        $usageMap = $this->getReservationUsageMap(
+            $package_id,
+            $pickup_date,
+            $return_date,
+            $ignore_booking_id,
+            $lockRows
+        );
+
+        foreach ($usageMap as $count) {
+            if ($count >= $capacity) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * ดึงข้อมูล availability ledger สำหรับ API
+     */
+    public function getAvailabilityWindow($package_id, $start_date, $end_date) {
+        try {
+            $query = "SELECT ea.date, ea.status, ea.booking_id, b.booking_code
+                      FROM equipment_availability ea
+                      LEFT JOIN bookings b ON ea.booking_id = b.id
+                      WHERE ea.package_id = :package_id
+                        AND ea.date BETWEEN :start AND :end
+                      ORDER BY ea.date ASC";
+
+            $stmt = $this->conn->prepare($query);
+            $stmt->bindParam(":package_id", $package_id, PDO::PARAM_INT);
+            $stmt->bindParam(":start", $start_date);
+            $stmt->bindParam(":end", $end_date);
+            $stmt->execute();
+
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            if (!$this->isMissingTableError($e)) {
+                throw $e;
+            }
+
+            log_event('equipment_availability missing, deriving availability from bookings', 'WARNING');
+            return $this->deriveAvailabilityFromBookings($package_id, $start_date, $end_date);
+        }
+    }
+
+    private function hydrateFromRow(array $row) {
+        $this->id = $row['id'];
+        $this->booking_code = $row['booking_code'];
+        $this->user_id = $row['user_id'];
+        $this->package_id = $row['package_id'];
+        $this->pickup_date = $row['pickup_date'];
+        $this->return_date = $row['return_date'];
+        $this->pickup_time = $row['pickup_time'];
+        $this->return_time = $row['return_time'];
+        $this->rental_days = $row['rental_days'];
+        $this->location = $row['location'];
+        $this->notes = $row['notes'];
+        $this->total_price = $row['total_price'];
+        $this->status = $row['status'];
+        $this->created_at = $row['created_at'];
+    }
+
+    private function seedAvailabilityLedger() {
+        $insert = "INSERT INTO equipment_availability (package_id, booking_id, date, status)
+                   VALUES (:package_id, :booking_id, :date, 'reserved')";
+        $stmt = $this->conn->prepare($insert);
+        $stmt->bindParam(":package_id", $this->package_id, PDO::PARAM_INT);
+        $stmt->bindParam(":booking_id", $this->id, PDO::PARAM_INT);
+
+        foreach ($this->generateDateSequence($this->pickup_date, $this->return_date) as $date) {
+            $stmt->bindValue(":date", $date);
+            if (!$stmt->execute()) {
+                throw new Exception('Failed to write availability ledger');
+            }
+        }
+    }
+
+    private function deleteAvailabilityLedger() {
+        $stmt = $this->conn->prepare("DELETE FROM equipment_availability WHERE booking_id = :booking_id");
+        $stmt->bindParam(":booking_id", $this->id, PDO::PARAM_INT);
+        $stmt->execute();
+    }
+
+    private function getPackageCapacity($package_id) {
+        if (!isset($this->packageCapacityCache[$package_id])) {
+            $query = "SELECT COALESCE(max_concurrent_reservations, 1) AS capacity
+                      FROM packages
+                      WHERE id = :package_id";
+            $stmt = $this->conn->prepare($query);
+            $stmt->bindParam(":package_id", $package_id, PDO::PARAM_INT);
+            $stmt->execute();
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            $this->packageCapacityCache[$package_id] = (int)($result['capacity'] ?? 1);
+        }
+
+        return max(1, (int)$this->packageCapacityCache[$package_id]);
+    }
+
+    private function generateDateSequence($start, $end) {
+        $dates = [];
+        $current = new DateTime($start);
+        $limit = new DateTime($end);
+
+        while ($current <= $limit) {
+            $dates[] = $current->format('Y-m-d');
+            $current->modify('+1 day');
+        }
+
+        return $dates;
+    }
+
+    private function isMissingTableError(PDOException $e) {
+        if ($e->getCode() === '42S02') {
+            return true;
+        }
+        $message = $e->getMessage();
+        return strpos($message, '1146') !== false;
+    }
+
+	private function deriveAvailabilityFromBookings($package_id, $start_date, $end_date) {
+		$query = "SELECT id, booking_code, pickup_date, return_date, status
+		          FROM " . $this->table_name . "
+		          WHERE package_id = :package_id
+		            AND NOT (return_date < :start OR pickup_date > :end)";
+
+		try {
+			$stmt = $this->conn->prepare($query);
+			$stmt->bindParam(":package_id", $package_id, PDO::PARAM_INT);
+			$stmt->bindParam(":start", $start_date);
+			$stmt->bindParam(":end", $end_date);
+			$stmt->execute();
+
+			$rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+		} catch (PDOException $e) {
+			if (!$this->isMissingColumnError($e)) {
+				throw $e;
+			}
+
+			$legacyQuery = "SELECT id, booking_code, booking_date, status
+						 FROM " . $this->table_name . "
+						 WHERE package_id = :package_id
+						   AND booking_date BETWEEN :start AND :end";
+
+			$stmt = $this->conn->prepare($legacyQuery);
+			$stmt->bindParam(":package_id", $package_id, PDO::PARAM_INT);
+			$stmt->bindParam(":start", $start_date);
+			$stmt->bindParam(":end", $end_date);
+			$stmt->execute();
+
+			$rows = array_map(function ($row) {
+				$row['pickup_date'] = $row['booking_date'];
+				$row['return_date'] = $row['booking_date'];
+				unset($row['booking_date']);
+				return $row;
+			}, $stmt->fetchAll(PDO::FETCH_ASSOC));
+		}
+
+		$results = [];
+
+		foreach ($rows as $row) {
+			$status = $this->mapBookingStatusToAvailability($row['status']);
+			if ($status === null) {
+				continue;
+			}
+
+			$pickup = $row['pickup_date'];
+			$return = $row['return_date'];
+			if (!$pickup || !$return) {
+				continue;
+			}
+
+			foreach ($this->generateDateSequence(
+				max($pickup, $start_date),
+				min($return, $end_date)
+			) as $date) {
+				$results[] = [
+					'date' => $date,
+					'status' => $status,
+					'booking_id' => (int)$row['id'],
+					'booking_code' => $row['booking_code'],
+				];
+			}
+		}
+
+		usort($results, function ($a, $b) {
+			return strcmp($a['date'], $b['date']);
+		});
+
+		return $results;
+	}
+
+	private function mapBookingStatusToAvailability($status) {
+		switch ($status) {
+			case 'pending':
+			case 'confirmed':
+				return 'reserved';
+			case 'completed':
+				return 'returned';
+			case 'cancelled':
+			default:
+				return null;
+		}
+	}
+
+    public function logCapacityWarning($package_id, $pickup_date, $return_date, $user_id = null, ?array $usageMap = null, ?int $capacity = null) {
+        if ($usageMap === null) {
+            $usageMap = $this->getReservationUsageMap($package_id, $pickup_date, $return_date);
+        }
+        if ($capacity === null) {
+            $capacity = $this->getPackageCapacity($package_id);
+        }
+
+        $message = sprintf(
+            'Booking capacity exceeded: package_id=%d, range=%s..%s, usage=%s, capacity=%d%s',
+            $package_id,
+            $pickup_date,
+            $return_date,
+            json_encode($usageMap, JSON_UNESCAPED_SLASHES),
+            $capacity,
+            $user_id ? ', user_id=' . $user_id : ''
+        );
+
+        log_event($message, 'WARNING');
+    }
+
+    private function getReservationUsageMap($package_id, $start_date, $end_date, $ignore_booking_id = null, $lockRows = false) {
+        $usage = [];
+        foreach ($this->generateDateSequence($start_date, $end_date) as $date) {
+            $usage[$date] = 0;
+        }
+
+        try {
+            $query = "SELECT date, COUNT(*) as reserved_count
+                      FROM equipment_availability
+                      WHERE package_id = :package_id
+                        AND date BETWEEN :start AND :end
+                        AND status IN ('reserved', 'picked_up', 'maintenance')";
+
+            if ($ignore_booking_id) {
+                $query .= " AND (booking_id IS NULL OR booking_id <> :ignore_booking_id)";
+            }
+
+            $query .= " GROUP BY date";
+            if ($lockRows) {
+                $query .= " FOR UPDATE";
+            }
+
+            $stmt = $this->conn->prepare($query);
+            $stmt->bindParam(":package_id", $package_id, PDO::PARAM_INT);
+            $stmt->bindParam(":start", $start_date);
+            $stmt->bindParam(":end", $end_date);
+            if ($ignore_booking_id) {
+                $stmt->bindParam(":ignore_booking_id", $ignore_booking_id, PDO::PARAM_INT);
+            }
+            $stmt->execute();
+
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                $usage[$row['date']] = (int)$row['reserved_count'];
+            }
+
+            return $usage;
+        } catch (PDOException $e) {
+            if (!$this->isMissingTableError($e)) {
+                throw $e;
+            }
+            log_event('equipment_availability missing, deriving usage from bookings', 'WARNING');
+            // fall back to derived data
+        }
+
+        $derived = $this->deriveAvailabilityFromBookings($package_id, $start_date, $end_date);
+        foreach ($derived as $row) {
+            if ($ignore_booking_id && $row['booking_id'] === (int)$ignore_booking_id) {
+                continue;
+            }
+            if (!in_array($row['status'], ['reserved', 'picked_up', 'maintenance'], true)) {
+                continue;
+            }
+            if (!isset($usage[$row['date']])) {
+                $usage[$row['date']] = 0;
+            }
+            $usage[$row['date']]++;
+        }
+
+        return $usage;
+    }
+
+	private function isMissingColumnError(PDOException $e) {
+		if ($e->getCode() === '42S22') {
+			return true;
+		}
+		return strpos($e->getMessage(), '1054') !== false;
+	}
 }
+
 ?>
